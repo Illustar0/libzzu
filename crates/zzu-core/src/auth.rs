@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use futures_util::future::try_join;
 use jiff::Timestamp;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use rsa::RsaPublicKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -35,6 +35,61 @@ pub enum Service {
     LibraryReservation,
     /// 学生请假系统。
     Leave,
+    /// 本科教务系统（EAMS）下的指定前端子应用。
+    UndergradEas(UndergradEasService),
+}
+
+/// 本科教务系统（EAMS）支持直接携带令牌跳转的前端子应用。
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum UndergradEasService {
+    /// 学籍信息查询。
+    StudentStatus,
+    /// 培养方案完成情况。
+    ProgramCompletion,
+    /// 选课。
+    CourseSelection,
+    /// 考试查询。
+    Exams,
+    /// 学业预警查询。
+    AcademicWarnings,
+    /// 成绩查询。
+    Grades,
+    /// 课表查询。
+    Timetable,
+    /// 全校开课查询。
+    CourseOfferings,
+    /// 校历。
+    SchoolCalendar,
+    /// 空闲教室查询。
+    AvailableClassrooms,
+    /// 教室课表。
+    ClassroomTimetable,
+}
+
+impl UndergradEasService {
+    const fn url(self) -> &'static str {
+        match self {
+            Self::StudentStatus => "https://jwxt.zzu.edu.cn/eams-student-status-app/index.html",
+            Self::ProgramCompletion => {
+                "https://jwxt.zzu.edu.cn/eams-student-plan-complete-app/index.html"
+            }
+            Self::CourseSelection => "https://jwxt.zzu.edu.cn/course-selection/index.html",
+            Self::Exams => "https://jwxt.zzu.edu.cn/eams-exam-student-app/index.html",
+            Self::AcademicWarnings => {
+                "https://jwxt.zzu.edu.cn/eams-study-precaution-search-app/index.html"
+            }
+            Self::Grades => "https://jwxt.zzu.edu.cn/eams-student-grade-app/index.html",
+            Self::Timetable => "https://jwxt.zzu.edu.cn/eams-student-course-table-app/index.html",
+            Self::CourseOfferings => "https://jwxt.zzu.edu.cn/eams-lesson-search-app/index.html",
+            Self::SchoolCalendar => "https://jwxt.zzu.edu.cn/eams-school-calendar-app/index.html",
+            Self::AvailableClassrooms => "https://jwxt.zzu.edu.cn/eams-room-occupy-app/index.html",
+            Self::ClassroomTimetable => {
+                "https://jwxt.zzu.edu.cn/eams-room-course-table-app/index.html"
+            }
+        }
+    }
 }
 
 /// 统一身份认证签发的用户令牌与刷新令牌对。
@@ -540,19 +595,23 @@ impl CasClient {
 
     /// 获取当前已登录账号访问指定业务系统 `service` 的单点登录跳转 URL。
     ///
-    /// 使用当前会话的 `user_token` 请求对应门户入口或 CAS 服务票据签发接口，不跟随重定向，直接提取并返回响应头中的 `Location` 跳转地址。
+    /// - 对于 [`Service::UndergradEas`]，直接使用当前会话的 `user_token` 在本地拼接目标教务子应用的 `?idToken=...` 地址，不发起网络请求。
+    /// - 对于其余服务，使用 `user_token` 请求对应门户入口或 CAS 服务票据签发接口，不跟随重定向，直接提取并返回响应头中的 `Location` 跳转地址。
+    ///
+    /// 返回的 URL 携带单点登录票据或用户令牌，切勿直接写入日志。
     ///
     /// # Errors
     ///
     /// - 当会话尚未登录或令牌不可用时，返回 [`Error::Authentication`]（细分为 [`AuthenticationErrorKind::NotAuthenticated`] 或 [`AuthenticationErrorKind::TokenExpired`]）。
-    /// - 当网络传输失败或服务端返回非 2xx/3xx HTTP 状态码时，返回 [`Error::Transport`] 或 [`Error::Http`]。
-    /// - 当响应缺少有效的非空 `Location` 头时，返回 [`Error::Decode`]。
+    /// - 当需要向服务端申请跳转票据且网络传输失败或返回非 2xx/3xx HTTP 状态码时，返回 [`Error::Transport`] 或 [`Error::Http`]。
+    /// - 当重定向响应缺少有效的非空 `Location` 头或目标 URL 构造失败时，返回 [`Error::Decode`]。
     pub async fn service_login_url(&self, service: Service) -> Result<String> {
         match service {
             Service::Email => self.email_login_url().await,
             Service::Library => self.library_login_url().await,
             Service::LibraryReservation => self.library_reservation_login_url().await,
             Service::Leave => self.leave_login_url().await,
+            Service::UndergradEas(service) => self.undergrad_eas_login_url(service).await,
         }
     }
 
@@ -580,6 +639,13 @@ impl CasClient {
 
     async fn leave_login_url(&self) -> Result<String> {
         self.assign_ticket(LEAVE_URL, "请假系统").await
+    }
+
+    async fn undergrad_eas_login_url(&self, service: UndergradEasService) -> Result<String> {
+        let token = self.user_token().await?;
+        let url =
+            Url::parse_with_params(service.url(), [("idToken", token)]).map_err(Error::decode)?;
+        Ok(url.into())
     }
 
     async fn assign_ticket(&self, service: &str, system_name: &str) -> Result<String> {

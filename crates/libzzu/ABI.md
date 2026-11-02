@@ -263,7 +263,12 @@ zzu_runtime_free(runtime);
 | `send_sms` | 无 | `null` | 向绑定安全手机发送短信验证码（未探测过 MFA 时自动先探测；无需 MFA 或不支持短信时返回 `invalid_mfa_state`） |
 | `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验（未先调用 `send_sms` 返回 `invalid_mfa_state`，验证码错误返回 `mfa_verification_failed`）；通过后须再次调用 `login` |
 | `user_info` | 无 | `PersonalInfo` | 查询个人身份信息、未读邮件数、校园卡余额与科研计数（需已登录） |
-| `service_login_url` | `service: "email" \| "library" \| "library_reservation" \| "leave"` | `string` | 获取指定业务系统（依次对应校园邮箱、图书馆、图书馆空间预约、请假系统）的单点登录跳转 URL，从重定向响应的 `Location` 头原样提取（需已登录；缺少非空 `Location` 头时返回 `ZZU_DECODE_ERROR`） |
+| `service_login_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或 `idToken`，不得写入日志） |
+
+`Service` 参数取值：
+
+- 独立系统（字符串）：`"email"`（校园邮箱）、`"library"`（图书馆门户）、`"library_reservation"`（图书馆空间预约）、`"leave"`（学生请假系统）。向门户或 CAS 请求单点登录重定向并原样提取响应 `Location` 头；缺少非空 `Location` 头时返回 `ZZU_DECODE_ERROR`。
+- 本科教务子应用（对象 `{"undergrad_eas": "<app>"}`）：在本地用当前 `userToken` 直接拼接目标教务子应用的 `?idToken=...` 地址，不发起网络请求。`"<app>"` 可取 `"student_status"`（学籍信息查询）、`"program_completion"`（培养方案完成情况）、`"course_selection"`（选课）、`"exams"`（考试查询）、`"academic_warnings"`（学业预警查询）、`"grades"`（成绩查询）、`"timetable"`（课表查询）、`"course_offerings"`（全校开课查询）、`"school_calendar"`（校历）、`"available_classrooms"`（空闲教室查询）、`"classroom_timetable"`（教室课表）。
 
 `PersonalInfo` 结构：
 
