@@ -18,6 +18,7 @@ const INFO_URL: &str = "https://authx-service.s.zzu.edu.cn/personal/api/v1/perso
 const CARDS_URL: &str =
     "https://info.s.zzu.edu.cn/portal-api/v1/thrid-adapter/get-person-info-card-list";
 const EMAIL_URL: &str = "https://service.s.zzu.edu.cn/portalApi/api/open/email/login";
+const PRESIDENT_MAILBOX_URL: &str = "https://mailbox.v.zzu.edu.cn/mobile/auth2/cas";
 const LIBRARY_URL: &str = "https://library.zzu.edu.cn/sso/login/3rd/22757";
 const LIBRARY_RESERVATION_URL: &str = "http://order.lib.zzu.edu.cn/v4/login/cas";
 const LEAVE_URL: &str = "https://jf.v.zzu.edu.cn/jksb/servlet/qjxtcas?returnUrl=https%3A%2F%2Fjf.v.zzu.edu.cn%2Fleave%2Finforhome.jsp";
@@ -35,6 +36,8 @@ pub enum Service {
     LibraryReservation,
     /// 学生请假系统。
     Leave,
+    /// 校长信箱系统。
+    PresidentMailbox,
     /// 本科教务系统（EAMS）下的指定前端子应用。
     UndergradEas(UndergradEasService),
 }
@@ -595,7 +598,7 @@ impl CasClient {
 
     /// 获取当前已登录账号访问指定业务系统 `service` 的单点登录跳转 URL。
     ///
-    /// - 对于 [`Service::UndergradEas`]，直接使用当前会话的 `user_token` 在本地拼接目标教务子应用的 `?idToken=...` 地址，不发起网络请求。
+    /// - 对于 [`Service::PresidentMailbox`] 与 [`Service::UndergradEas`]，直接使用当前会话的 `user_token` 在本地拼接携带令牌参数（`?token=...` 或 `?idToken=...`）的目标地址，不发起网络请求。
     /// - 对于其余服务，使用 `user_token` 请求对应门户入口或 CAS 服务票据签发接口，不跟随重定向，直接提取并返回响应头中的 `Location` 跳转地址。
     ///
     /// 返回的 URL 携带单点登录票据或用户令牌，切勿直接写入日志。
@@ -611,6 +614,7 @@ impl CasClient {
             Service::Library => self.library_login_url().await,
             Service::LibraryReservation => self.library_reservation_login_url().await,
             Service::Leave => self.leave_login_url().await,
+            Service::PresidentMailbox => self.president_mailbox_login_url().await,
             Service::UndergradEas(service) => self.undergrad_eas_login_url(service).await,
         }
     }
@@ -639,6 +643,13 @@ impl CasClient {
 
     async fn leave_login_url(&self) -> Result<String> {
         self.assign_ticket(LEAVE_URL, "请假系统").await
+    }
+
+    async fn president_mailbox_login_url(&self) -> Result<String> {
+        let token = self.user_token().await?;
+        let url = Url::parse_with_params(PRESIDENT_MAILBOX_URL, [("token", token)])
+            .map_err(Error::decode)?;
+        Ok(url.into())
     }
 
     async fn undergrad_eas_login_url(&self, service: UndergradEasService) -> Result<String> {
