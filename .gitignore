@@ -1,0 +1,7 @@
+/target
+/dist
+/build/bin
+/build/obj
+/.fallout/temp
+/.idea
+/timetable.ics

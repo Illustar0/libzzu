@@ -1,0 +1,12 @@
+[package]
+name = "zzu"
+version.workspace = true
+edition.workspace = true
+description = "Rust API for zzu"
+license.workspace = true
+
+[dependencies]
+zzu-core.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,8 @@
+language = "C"
+include_guard = "LIBZZU_H"
+cpp_compat = true
+documentation = true
+usize_is_size_t = true
+
+[enum]
+prefix_with_name = true

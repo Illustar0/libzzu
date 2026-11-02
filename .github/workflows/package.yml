@@ -1,0 +1,124 @@
+name: Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore build dependencies
+        run: dotnet restore build/_build.csproj --locked-mode
+
+      - name: Generate packaging matrix
+        id: matrix
+        run: dotnet run --project build --no-restore -- Matrix
+
+  package:
+    needs: plan
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore build dependencies
+        run: dotnet restore build/_build.csproj --locked-mode
+
+      - name: Configure MSVC
+        if: matrix.msvc_arch != null
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Set up Windows native tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm --yes --no-progress
+          "$env:ProgramFiles\NASM" >> $env:GITHUB_PATH
+          "$env:ProgramFiles\LLVM\bin" >> $env:GITHUB_PATH
+
+      - name: Select 32-bit MinGW
+        if: matrix.target == 'i686-pc-windows-gnu'
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value 'C:\mingw32\bin'
+
+      - name: Build and package
+        run: dotnet run --project build --no-restore -- Package --platform "${{ matrix.target }}"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: libzzu-${{ matrix.target }}
+          path: dist/*.tar.gz*
+          if-no-files-found: error
+          compression-level: 0
+
+  ios:
+    needs: [plan, package]
+    if: >-
+      contains(fromJSON(needs.plan.outputs.matrix).include.*.target, 'aarch64-apple-ios') &&
+      contains(fromJSON(needs.plan.outputs.matrix).include.*.target, 'aarch64-apple-ios-sim') &&
+      contains(fromJSON(needs.plan.outputs.matrix).include.*.target, 'x86_64-apple-ios')
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore build dependencies
+        run: dotnet restore build/_build.csproj --locked-mode
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: libzzu-*-apple-ios*
+          path: dist
+          merge-multiple: true
+
+      - name: Assemble XCFramework
+        run: dotnet run --project build --no-restore -- Xcframework
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: libzzu-ios-xcframework
+          path: dist/libzzu-*-ios.tar.gz*
+          if-no-files-found: error
+          compression-level: 0

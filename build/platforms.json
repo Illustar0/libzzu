@@ -1,0 +1,277 @@
+{
+  "tools": {
+    "cargo_ndk": "4.1.2",
+    "ndk": "30.0.16248370",
+    "android_api": 22
+  },
+  "platforms": [
+    {
+      "target": "aarch64-linux-android",
+      "runner": "ubuntu-24.04",
+      "builder": "android",
+      "android_abi": "arm64-v8a",
+      "rustflags": [
+        "-C",
+        "link-arg=-Wl,-z,max-page-size=16384",
+        "-C",
+        "link-arg=-Wl,-z,common-page-size=16384"
+      ]
+    },
+    {
+      "target": "armv7-linux-androideabi",
+      "runner": "ubuntu-24.04",
+      "builder": "android",
+      "android_abi": "armeabi-v7a"
+    },
+    {
+      "target": "x86_64-linux-android",
+      "runner": "ubuntu-24.04",
+      "builder": "android",
+      "android_abi": "x86_64",
+      "rustflags": [
+        "-C",
+        "link-arg=-Wl,-z,max-page-size=16384",
+        "-C",
+        "link-arg=-Wl,-z,common-page-size=16384"
+      ]
+    },
+    {
+      "target": "i686-linux-android",
+      "runner": "ubuntu-24.04",
+      "builder": "android",
+      "android_abi": "x86"
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "runner": "macos-15",
+      "builder": "cargo",
+      "environment": {
+        "MACOSX_DEPLOYMENT_TARGET": "11.0"
+      },
+      "rustflags": [
+        "-C",
+        "link-arg=-Wl,-install_name,@rpath/libzzu.dylib"
+      ]
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "runner": "macos-15",
+      "builder": "cargo",
+      "environment": {
+        "MACOSX_DEPLOYMENT_TARGET": "10.15"
+      },
+      "rustflags": [
+        "-C",
+        "link-arg=-Wl,-install_name,@rpath/libzzu.dylib"
+      ]
+    },
+    {
+      "target": "aarch64-apple-ios",
+      "runner": "macos-15",
+      "builder": "cargo",
+      "static_only": true,
+      "environment": {
+        "IPHONEOS_DEPLOYMENT_TARGET": "13.0"
+      }
+    },
+    {
+      "target": "aarch64-apple-ios-sim",
+      "runner": "macos-15",
+      "builder": "cargo",
+      "static_only": true,
+      "environment": {
+        "IPHONEOS_DEPLOYMENT_TARGET": "13.0"
+      }
+    },
+    {
+      "target": "x86_64-apple-ios",
+      "runner": "macos-15",
+      "builder": "cargo",
+      "static_only": true,
+      "environment": {
+        "IPHONEOS_DEPLOYMENT_TARGET": "13.0"
+      }
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "runner": "windows-2025",
+      "builder": "cargo",
+      "msvc_arch": "amd64"
+    },
+    {
+      "target": "i686-pc-windows-msvc",
+      "runner": "windows-2025",
+      "builder": "cargo",
+      "msvc_arch": "amd64_x86"
+    },
+    {
+      "target": "aarch64-pc-windows-msvc",
+      "runner": "windows-2025",
+      "builder": "cargo",
+      "msvc_arch": "amd64_arm64",
+      "environment": {
+        "CC_aarch64_pc_windows_msvc": "clang-cl",
+        "AR_aarch64_pc_windows_msvc": "llvm-lib"
+      }
+    },
+    {
+      "target": "x86_64-pc-windows-gnu",
+      "runner": "windows-2025",
+      "builder": "cargo"
+    },
+    {
+      "target": "i686-pc-windows-gnu",
+      "runner": "windows-2025",
+      "builder": "cargo"
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "armv7-unknown-linux-gnueabihf",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "arm-unknown-linux-gnueabihf",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "i686-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "powerpc64le-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "mips-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true
+    },
+    {
+      "target": "mipsel-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true
+    },
+    {
+      "target": "mips64-unknown-linux-gnuabi64",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true
+    },
+    {
+      "target": "mips64el-unknown-linux-gnuabi64",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true
+    },
+    {
+      "target": "riscv64gc-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "s390x-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "builder": "cross"
+    },
+    {
+      "target": "x86_64-unknown-linux-musl",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "aarch64-unknown-linux-musl",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "armv7-unknown-linux-musleabihf",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "arm-unknown-linux-musleabihf",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "i686-unknown-linux-musl",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "mips-unknown-linux-musl",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "mipsel-unknown-linux-musl",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "mips64-unknown-linux-muslabi64",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    },
+    {
+      "target": "mips64el-unknown-linux-muslabi64",
+      "runner": "ubuntu-24.04",
+      "builder": "cross",
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "target-feature=-crt-static"
+      ]
+    }
+  ]
+}
