@@ -8,7 +8,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 use zzu_core::{
     TrustRoots,
-    network::{self, AuthResult, PortalClient, PortalEncryption, SelfServiceClient},
+    network::{
+        self, AuthResult, PortalClient, PortalEncryption, PortalSourceAddress, SelfServiceClient,
+    },
 };
 
 use super::{Guarded, done, parse, reply};
@@ -30,6 +32,8 @@ pub struct ZzuSelfServiceClient(Client<Guarded<SelfServiceClient>>);
 struct PortalConfig {
     base_url: String,
     user_ip: IpAddr,
+    #[serde(default)]
+    source_address: PortalSourceAddress,
     timeout_ms: Option<NonZeroU64>,
 }
 
@@ -224,7 +228,8 @@ pub unsafe extern "C" fn zzu_portal_discover_blocking(
 
 /// 创建校园网 Portal 认证客户端（本地完成，不发起网络请求）。
 ///
-/// `config` 为 UTF-8 JSON 对象：`baseUrl`、`userIp` 必填，`timeoutMs` 可选（默认 `15000` 毫秒）。
+/// `config` 为 UTF-8 JSON 对象：`baseUrl`、`userIp` 必填；`sourceAddress` 可选（`"user_ip"` 或
+/// `"system"`，默认 `"user_ip"`）；`timeoutMs` 可选（默认 `15000` 毫秒）。
 ///
 /// # Safety
 ///
@@ -254,6 +259,7 @@ pub unsafe extern "C" fn zzu_portal_new(
                 PortalClient::with_trust_roots(
                     &config.base_url,
                     config.user_ip,
+                    config.source_address,
                     &runtime.worker.trust_roots,
                 )?,
             )))

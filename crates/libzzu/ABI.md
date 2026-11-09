@@ -238,7 +238,7 @@ zzu_runtime_free(runtime);
 | `zzu_eas_new` | 无配置参数 | 沿用所传入 `ZzuCasClient` 的运行时、CAS 会话与 `timeoutMs` |
 | `zzu_ecard_new` | 无配置参数 | 沿用所传入 `ZzuCasClient` 的运行时、CAS 会话与 `timeoutMs` |
 | `zzu_portal_discover` / `_blocking` | `{"timeoutMs?": 15000}` | 可传 `NULL` 与长度 `0`；`timeoutMs` 为正整数毫秒，默认 `15000` |
-| `zzu_portal_new` | `{"baseUrl": "...", "userIp": "...", "timeoutMs?": 15000}` | `baseUrl` 为含主机名的 `http`/`https` URL（通常取探测结果的 `portalServerUrl`）；`userIp` 为本机内网 IP（通常取探测结果的 `userIp`，登录时绑定为本地出口源地址）；`timeoutMs` 默认 `15000` |
+| `zzu_portal_new` | `{"baseUrl": "...", "userIp": "...", "sourceAddress?": "user_ip", "timeoutMs?": 15000}` | `baseUrl` 为含主机名的 `http`/`https` URL（通常取探测结果的 `portalServerUrl`）；`userIp` 为门户识别的终端 IP（通常取探测结果的 `userIp`，登录时作为终端地址发送）；`sourceAddress` 为 `"user_ip"`（默认，把 `userIp` 绑定为本地源地址，适用于终端直接接入校园网）或 `"system"`（不绑定，由系统路由选择源地址，适用于终端位于 NAT 路由器后、`userIp` 为路由器 WAN 口地址）；`timeoutMs` 默认 `15000` |
 | `zzu_self_service_new` | `{"baseUrl": "...", "timeoutMs?": 15000}` | `baseUrl` 为校园网自助服务根地址（`http`/`https` URL）；`timeoutMs` 默认 `15000` |
 
 ---

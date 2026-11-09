@@ -474,7 +474,8 @@ ZzuStatus zzu_portal_discover_blocking(const struct ZzuRuntime *runtime,
 /**
  * 创建校园网 Portal 认证客户端（本地完成，不发起网络请求）。
  *
- * `config` 为 UTF-8 JSON 对象：`baseUrl`、`userIp` 必填，`timeoutMs` 可选（默认 `15000` 毫秒）。
+ * `config` 为 UTF-8 JSON 对象：`baseUrl`、`userIp` 必填；`sourceAddress` 可选（`"user_ip"` 或
+ * `"system"`，默认 `"user_ip"`）；`timeoutMs` 可选（默认 `15000` 毫秒）。
  *
  * # Safety
  *

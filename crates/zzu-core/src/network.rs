@@ -31,7 +31,7 @@ pub struct PortalInfo {
     pub auth_url: Url,
     /// Portal `eportal` 登录接口服务地址（含探测到的协议与端口，如 801 或 802）。
     pub portal_server_url: Url,
-    /// 门户重定向参数中标识的当前终端内网 IP 地址。
+    /// 门户重定向参数中标识的终端 IP 地址（终端位于 NAT 路由器后时为路由器 WAN 口地址）。
     pub user_ip: IpAddr,
 }
 
@@ -210,6 +210,17 @@ impl AuthResult {
     }
 }
 
+/// Portal 登录请求的本地源地址选择方式。
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortalSourceAddress {
+    /// 将 `user_ip` 绑定为套接字源地址（终端直接接入校园网，`user_ip` 是本机网卡地址）。
+    #[default]
+    UserIp,
+    /// 由系统路由选择源地址（终端位于 NAT 路由器后，`user_ip` 是路由器 WAN 口地址、不属于本机）。
+    System,
+}
+
 /// 校园网 `eportal` 认证客户端。
 pub struct PortalClient {
     http: Client,
@@ -218,17 +229,22 @@ pub struct PortalClient {
 }
 
 impl PortalClient {
-    /// 创建绑定指定本地出口源地址 `user_ip` 的 Portal 认证客户端。
+    /// 创建 Portal 认证客户端，按 `source_address` 决定是否把 `user_ip` 绑定为本地源地址。
     ///
-    /// `base_url` 通常取自 [`PortalInfo::portal_server_url`]。本函数仅校验 `base_url` 并在连接器中记录 `user_ip`，
-    /// 不立即绑定本地套接字；若 `user_ip` 非本机可用网卡地址，调用 [`Self::login`] 建立连接时将返回 [`Error::Transport`]。
-    /// 登录请求只连接 IPv4 地址。
+    /// `base_url` 通常取自 [`PortalInfo::portal_server_url`]；`user_ip` 通常取自 [`PortalInfo::user_ip`]，
+    /// 登录时作为终端地址发送给门户。本函数仅校验 `base_url`，不立即绑定本地套接字；选择
+    /// [`PortalSourceAddress::UserIp`] 而 `user_ip` 非本机可用网卡地址时，调用 [`Self::login`] 建立连接将返回
+    /// [`Error::Transport`]。登录请求只连接 IPv4 地址。
     ///
     /// # Errors
     ///
     /// 当 `base_url` 不是含主机名的有效 `http`/`https` URL，或底层 HTTP 客户端初始化失败时返回错误。
-    pub fn new(base_url: &str, user_ip: IpAddr) -> Result<Self> {
-        Self::with_trust_roots(base_url, user_ip, &TrustRoots::default())
+    pub fn new(
+        base_url: &str,
+        user_ip: IpAddr,
+        source_address: PortalSourceAddress,
+    ) -> Result<Self> {
+        Self::with_trust_roots(base_url, user_ip, source_address, &TrustRoots::default())
     }
 
     /// 创建校验证书时信任 `roots` 的 Portal 认证客户端，其余同 [`Self::new`]。
@@ -236,11 +252,20 @@ impl PortalClient {
     /// # Errors
     ///
     /// 当 `base_url` 不是含主机名的有效 `http`/`https` URL，或底层 HTTP 客户端初始化失败时返回错误。
-    pub fn with_trust_roots(base_url: &str, user_ip: IpAddr, roots: &TrustRoots) -> Result<Self> {
+    pub fn with_trust_roots(
+        base_url: &str,
+        user_ip: IpAddr,
+        source_address: PortalSourceAddress,
+        roots: &TrustRoots,
+    ) -> Result<Self> {
+        let local_address = match source_address {
+            PortalSourceAddress::UserIp => Some(user_ip),
+            PortalSourceAddress::System => None,
+        };
         let client = roots
             .tls_client_builder()
             .dns_resolver(Ipv4OnlyResolver)
-            .local_address(user_ip)
+            .local_address(local_address)
             .redirect(Policy::none())
             .build()?;
         Self::with_http_client(base_url, user_ip, client)
@@ -266,7 +291,7 @@ impl PortalClient {
     /// # Errors
     ///
     /// - 当选择 [`PortalEncryption::Xor`] 且待编码字段超过 512 个字符时返回 [`Error::InvalidInput`]。
-    /// - 当本地源地址 `user_ip` 无法绑定、网络传输失败、HTTP 状态非成功或返回的 `JSONP` 报文无法解析时返回相应错误。
+    /// - 当选择 [`PortalSourceAddress::UserIp`] 而 `user_ip` 无法绑定、网络传输失败、HTTP 状态非成功或返回的 `JSONP` 报文无法解析时返回相应错误。
     pub async fn login(
         &self,
         account: &str,
