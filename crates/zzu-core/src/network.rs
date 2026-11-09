@@ -34,7 +34,7 @@ pub struct PortalInfo {
 ///
 /// # Errors
 ///
-/// - 当探测请求已被重定向至 HTTPS（通常代表当前网络已连通互联网、未处于强制门户拦截状态）时，返回 [`Error::Remote`]。
+/// - 当探测请求已被重定向至 `https://www.bilibili.com`（通常代表当前网络已连通互联网、未处于强制门户拦截状态）时，返回 [`Error::Remote`]。
 /// - 当网络传输失败、HTML 跳转链接缺失，或重定向 URL 中缺少合法的客户端 IP 参数时返回相应错误。
 pub async fn discover_portal_info() -> Result<PortalInfo> {
     discover_portal_info_with_trust_roots(&TrustRoots::default()).await
@@ -50,13 +50,13 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
         .tls_client_builder()
         .redirect(Policy::limited(10))
         .build()?;
-    let response = http::send(client.get("http://bilibili.com"))
+    let response = http::send(client.get("http://www.bilibili.com"))
         .await?
         .require_success()?;
-    if response.url.scheme() == "https" {
+    if response.url.scheme() == "https" && response.url.host_str() == Some("www.bilibili.com") {
         return Err(Error::remote("未发现校园网认证重定向，可能已经联网".into()));
     }
-    let portal_url = if response.url.host_str() == Some("bilibili.com") {
+    let portal_url = if response.url.host_str() == Some("www.bilibili.com") {
         let base = response.url.clone();
         let href = html_attribute(response.body(), "a[href]", "href")
             .map_err(|error| error.with_request(response.context.clone()))?;
