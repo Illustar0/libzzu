@@ -39,6 +39,10 @@ all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "deny"
 
+[profile.release]
+lto = true
+codegen-units = 1
+
 [profile.test.package.libsm]
 opt-level = 2
 
