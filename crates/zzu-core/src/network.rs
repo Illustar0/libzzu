@@ -3,7 +3,7 @@
 use std::{
     collections::BTreeMap,
     fmt::Write as _,
-    net::{IpAddr, UdpSocket},
+    net::{IpAddr, SocketAddr, UdpSocket},
     sync::{Arc, LazyLock},
 };
 
@@ -12,7 +12,12 @@ use encoding_rs::GBK;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 use rand::Rng;
 use regex::Regex;
-use reqwest::{Client, Url, cookie::Jar, redirect::Policy};
+use reqwest::{
+    Client, Url,
+    cookie::Jar,
+    dns::{Addrs, Name, Resolve, Resolving},
+    redirect::Policy,
+};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -32,6 +37,8 @@ pub struct PortalInfo {
 
 /// 通过明文 HTTP 探测请求自动发现当前网络环境下的校园网 Portal 门户参数。
 ///
+/// 探测请求只连接 IPv4 地址，避免经其他网口的 IPv6 路由发出而探测到错误的终端地址。
+///
 /// # Errors
 ///
 /// - 当探测请求已被重定向至 `https://www.bilibili.com`（通常代表当前网络已连通互联网、未处于强制门户拦截状态）时，返回 [`Error::Remote`]。
@@ -48,6 +55,7 @@ pub async fn discover_portal_info() -> Result<PortalInfo> {
 pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result<PortalInfo> {
     let client = roots
         .tls_client_builder()
+        .dns_resolver(Ipv4OnlyResolver)
         .redirect(Policy::limited(10))
         .build()?;
     let response = http::send(client.get("http://www.bilibili.com"))
@@ -90,6 +98,29 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
         portal_server_url,
         user_ip,
     })
+}
+
+/// 只解析出 IPv4 地址的 DNS 解析器。
+///
+/// eportal 按 IPv4 地址识别终端。若允许 happy eyeballs 优先连接 IPv6，请求可能经持有 IPv6 默认路由的
+/// 其他网口发出，门户看到的就不是待认证的校园网地址。
+struct Ipv4OnlyResolver;
+
+impl Resolve for Ipv4OnlyResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .filter(SocketAddr::is_ipv4)
+                .collect();
+            if addresses.is_empty() {
+                return Err(format!("{host} 没有可用的 IPv4 地址").into());
+            }
+            let addresses: Addrs = Box::new(addresses.into_iter());
+            Ok(addresses)
+        })
+    }
 }
 
 fn decode_portal_text(bytes: &[u8]) -> String {
@@ -191,6 +222,7 @@ impl PortalClient {
     ///
     /// `base_url` 通常取自 [`PortalInfo::portal_server_url`]。本函数仅校验 `base_url` 并在连接器中记录 `user_ip`，
     /// 不立即绑定本地套接字；若 `user_ip` 非本机可用网卡地址，调用 [`Self::login`] 建立连接时将返回 [`Error::Transport`]。
+    /// 登录请求只连接 IPv4 地址。
     ///
     /// # Errors
     ///
@@ -207,6 +239,7 @@ impl PortalClient {
     pub fn with_trust_roots(base_url: &str, user_ip: IpAddr, roots: &TrustRoots) -> Result<Self> {
         let client = roots
             .tls_client_builder()
+            .dns_resolver(Ipv4OnlyResolver)
             .local_address(user_ip)
             .redirect(Policy::none())
             .build()?;
