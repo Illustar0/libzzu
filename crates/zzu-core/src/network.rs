@@ -72,8 +72,9 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
         .1
         .parse()
         .map_err(|_| Error::decode_message("Portal 客户端 IP 无效".into()))?;
-    let auth_url = Url::parse(&portal_url.origin().ascii_serialization()).map_err(Error::decode)?;
-    let js_url = auth_url.join("a41.js").map_err(Error::decode)?;
+    let pre_auth_url =
+        Url::parse(&portal_url.origin().ascii_serialization()).map_err(Error::decode)?;
+    let js_url = pre_auth_url.join("a41.js").map_err(Error::decode)?;
     let script = http::send_with_text_decoder(client.get(js_url), async |response| {
         let bytes = response.bytes().await?;
         Ok(decode_portal_text(&bytes))
@@ -82,6 +83,7 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
     .and_then(http::Response::require_success)
     .ok()
     .map(|response| response.body().to_owned());
+    let auth_url = auth_url(&pre_auth_url, script.as_deref())?;
     let portal_server_url = portal_server_url(&auth_url, script.as_deref())?;
     Ok(PortalInfo {
         auth_url,
@@ -95,6 +97,21 @@ fn decode_portal_text(bytes: &[u8]) -> String {
         return text.to_owned();
     }
     GBK.decode(bytes).0.into_owned()
+}
+
+fn auth_url(pre_auth_url: &Url, script: Option<&str>) -> Result<Url> {
+    static DOMAIN_NAME: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"\bvar\s+domainName\s*=\s*(?:"([^"]+)"|'([^']+)')\s*;"#)
+            .expect("static JavaScript pattern")
+    });
+    let mut url = pre_auth_url.clone();
+    if let Some(domain) = script
+        .and_then(|script| DOMAIN_NAME.captures(script))
+        .and_then(|captures| captures.get(1).or_else(|| captures.get(2)))
+    {
+        url.set_host(Some(domain.as_str())).map_err(Error::decode)?;
+    }
+    Ok(url)
 }
 
 fn portal_server_url(auth_url: &Url, script: Option<&str>) -> Result<Url> {
