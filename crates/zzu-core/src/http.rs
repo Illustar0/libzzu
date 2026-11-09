@@ -1,4 +1,4 @@
-use std::{ops::Deref, sync::Arc};
+use std::{future::Future, ops::Deref, sync::Arc};
 
 use reqwest::{
     Certificate, Client, ClientBuilder, RequestBuilder, StatusCode, Url, header::HeaderMap,
@@ -79,6 +79,16 @@ pub(crate) struct Response {
 }
 
 pub(crate) async fn send(builder: RequestBuilder) -> Result<Response> {
+    send_with_text_decoder(builder, reqwest::Response::text).await
+}
+
+pub(crate) async fn send_with_text_decoder<DecodeFuture>(
+    builder: RequestBuilder,
+    decode_body: impl FnOnce(reqwest::Response) -> DecodeFuture,
+) -> Result<Response>
+where
+    DecodeFuture: Future<Output = reqwest::Result<String>>,
+{
     let (client, request) = builder.build_split();
     let request = request?;
     let mut url = request.url().clone();
@@ -100,8 +110,7 @@ pub(crate) async fn send(builder: RequestBuilder) -> Result<Response> {
     context.status_code = Some(response.status().as_u16());
     let headers = response.headers().clone();
     let url = response.url().clone();
-    let body = response
-        .text()
+    let body = decode_body(response)
         .await
         .map_err(|error| Error::from(error).with_request(Arc::new(context.clone())))?;
     context.error_code = serde_json::from_str::<Value>(&body)

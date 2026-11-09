@@ -12,6 +12,7 @@ zzu-core = { version = "0.1.0", path = "crates/zzu-core" }
 base64 = "0.22"
 jiff = { version = "0.2", features = ["serde", "tzdb-bundle-always"] }
 ecb = { version = "0.1", features = ["alloc"] }
+encoding_rs = "0.8"
 hex = "0.4"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 icalendar = { version = "0.17", default-features = false }

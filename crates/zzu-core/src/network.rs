@@ -8,6 +8,7 @@ use std::{
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD};
+use encoding_rs::GBK;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 use rand::Rng;
 use regex::Regex;
@@ -63,6 +64,7 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
     } else {
         response.url.clone()
     };
+
     let user_ip = portal_url
         .query_pairs()
         .find(|(key, _)| key == "userip" || key == "wlanuserip")
@@ -72,17 +74,27 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
         .map_err(|_| Error::decode_message("Portal 客户端 IP 无效".into()))?;
     let auth_url = Url::parse(&portal_url.origin().ascii_serialization()).map_err(Error::decode)?;
     let js_url = auth_url.join("a41.js").map_err(Error::decode)?;
-    let script = http::send(client.get(js_url))
-        .await
-        .and_then(http::Response::require_success)
-        .ok()
-        .map(|response| response.body().to_owned());
+    let script = http::send_with_text_decoder(client.get(js_url), async |response| {
+        let bytes = response.bytes().await?;
+        Ok(decode_portal_text(&bytes))
+    })
+    .await
+    .and_then(http::Response::require_success)
+    .ok()
+    .map(|response| response.body().to_owned());
     let portal_server_url = portal_server_url(&auth_url, script.as_deref())?;
     Ok(PortalInfo {
         auth_url,
         portal_server_url,
         user_ip,
     })
+}
+
+fn decode_portal_text(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_owned();
+    }
+    GBK.decode(bytes).0.into_owned()
 }
 
 fn portal_server_url(auth_url: &Url, script: Option<&str>) -> Result<Url> {
