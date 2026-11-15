@@ -3,8 +3,8 @@ name: Package
 on:
   workflow_call:
     inputs:
-      manifests:
-        description: Artifact with Cargo manifests that override the checked-out ones, such as release versions
+      version:
+        description: Crate version to package, without the leading v; empty keeps the version in Cargo.toml
         type: string
         default: ""
   workflow_dispatch:
@@ -54,11 +54,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Apply Cargo manifests
-        if: inputs.manifests != ''
-        uses: actions/download-artifact@v8
+      - uses: taiki-e/install-action@v2
+        if: inputs.version != ''
         with:
-          name: ${{ inputs.manifests }}
+          tool: cargo-edit
+
+      - name: Set crate versions
+        if: inputs.version != ''
+        run: cargo set-version --workspace "${{ inputs.version }}"
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -111,11 +114,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Apply Cargo manifests
-        if: inputs.manifests != ''
-        uses: actions/download-artifact@v8
+      - uses: taiki-e/install-action@v2
+        if: inputs.version != ''
         with:
-          name: ${{ inputs.manifests }}
+          tool: cargo-edit
+
+      - name: Set crate versions
+        if: inputs.version != ''
+        run: cargo set-version --workspace "${{ inputs.version }}"
 
       - uses: actions/setup-dotnet@v6
         with:

@@ -35,6 +35,27 @@ jobs:
       - name: Check
         run: dotnet run --project build --no-restore -- Check
 
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Find latest release tag
+        id: tag
+        run: |
+          tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
   package:
-    needs: check
+    needs: [check, version]
     uses: ./.github/workflows/package.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
