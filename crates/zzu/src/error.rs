@@ -1,8 +1,479 @@
-//! 错误分类、请求诊断上下文与统一 `Result` 类型。
+use std::{error::Error as StdError, fmt, sync::Arc};
 
-pub use zzu_core::{
-    AuthenticationError, AuthenticationErrorKind, CryptoError, CryptoErrorKind, DecodeError,
-    DecodeErrorKind, Error, ErrorDetails, HttpError, HttpErrorKind, InvalidInputError,
-    InvalidInputErrorKind, NotFoundError, NotFoundErrorKind, RemoteError, RemoteErrorKind,
-    RequestContext, Result, TransportError, TransportErrorKind,
-};
+use serde::Serialize;
+
+/// 统一错误类型为 [`Error`] 的 `Result` 别名。
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// 失败 HTTP 请求关联的诊断上下文。
+///
+/// 为避免泄露敏感凭据，`url` 已预先剥离查询参数、片段与用户信息；
+/// [`fmt::Debug`] 实现仅输出响应体字节长度，不打印完整正文。
+#[derive(Clone, Serialize)]
+pub struct RequestContext {
+    /// HTTP 请求方法（如 `"GET"`、`"POST"`）。
+    pub method: String,
+    /// 已脱敏的请求目标 URL（不含查询参数、片段与认证凭据）。
+    pub url: String,
+    /// 收到的 HTTP 状态码；若请求在建立连接或等待响应阶段失败则为 `None`。
+    pub status_code: Option<u16>,
+    /// 从响应 JSON 中提取的业务错误码文本（如 `code`、`result` 或 `returncode` 字段）。
+    pub error_code: Option<String>,
+    /// 原始响应体文本；在读取响应体前即失败时为 `None`。
+    pub response_body: Option<String>,
+}
+
+impl fmt::Debug for RequestContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RequestContext")
+            .field("method", &self.method)
+            .field("url", &self.url)
+            .field("status_code", &self.status_code)
+            .field("error_code", &self.error_code)
+            .field(
+                "response_body_bytes",
+                &self.response_body.as_ref().map(String::len),
+            )
+            .finish()
+    }
+}
+
+/// 网络传输层错误的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum TransportErrorKind {
+    /// 连接或读写操作超时。
+    Timeout,
+    /// 无法建立网络连接（如连接被拒绝、DNS 或代理握手失败）。
+    Connection,
+    /// 未归类的其他传输层故障。
+    Unknown,
+}
+
+/// 非 2xx HTTP 状态错误的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum HttpErrorKind {
+    /// 未归类的 HTTP 状态错误。
+    Unknown,
+}
+
+/// 响应或协议数据解码错误的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DecodeErrorKind {
+    /// 未归类的解码或格式解析错误。
+    Unknown,
+}
+
+/// 调用方输入参数校验错误的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum InvalidInputErrorKind {
+    /// 未归类的输入参数错误。
+    Unknown,
+}
+
+/// 身份认证与多因素认证（MFA）错误的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AuthenticationErrorKind {
+    /// 账号或密码错误（服务端确认凭据无效）。
+    InvalidCredentials,
+    /// 当前客户端尚未登录或已登出。
+    NotAuthenticated,
+    /// 令牌已过期或即将过期，无法继续使用。
+    TokenExpired,
+    /// 登录流程需要完成多因素认证（如短信验证码）后才能继续。
+    MfaRequired,
+    /// 多因素认证状态不满足当前操作前提（如未发送短信即校验验证码，或当前会话不支持短信验证）。
+    InvalidMfaState,
+    /// 多因素认证校验未通过（如短信验证码错误）。
+    MfaVerificationFailed,
+    /// 未归类的其他认证失败。
+    Unknown,
+}
+
+/// 远端服务返回业务失败结果的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RemoteErrorKind {
+    /// 未归类的远端业务错误。
+    Unknown,
+}
+
+/// 目标资源不存在错误的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum NotFoundErrorKind {
+    /// 未归类的资源未找到错误。
+    Unknown,
+}
+
+/// 密钥解析或加解密错误的细分类型。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CryptoErrorKind {
+    /// 未归类的密码学处理错误。
+    Unknown,
+}
+
+/// 网络传输错误详情。
+pub type TransportError = ErrorDetails<TransportErrorKind>;
+/// 非 2xx HTTP 状态错误详情。
+pub type HttpError = ErrorDetails<HttpErrorKind>;
+/// 响应或协议数据解码错误详情。
+pub type DecodeError = ErrorDetails<DecodeErrorKind>;
+/// 输入参数校验错误详情。
+pub type InvalidInputError = ErrorDetails<InvalidInputErrorKind>;
+/// 身份认证错误详情。
+pub type AuthenticationError = ErrorDetails<AuthenticationErrorKind>;
+/// 远端服务业务错误详情。
+pub type RemoteError = ErrorDetails<RemoteErrorKind>;
+/// 目标资源不存在错误详情。
+pub type NotFoundError = ErrorDetails<NotFoundErrorKind>;
+/// 密码学处理错误详情。
+pub type CryptoError = ErrorDetails<CryptoErrorKind>;
+
+/// 携带细分类型、人类可读消息、可选请求上下文与底层错误源的通用错误载体。
+#[derive(Debug)]
+pub struct ErrorDetails<K> {
+    kind: K,
+    context: ErrorContext,
+}
+
+impl<K> ErrorDetails<K> {
+    fn new(kind: K, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            context: ErrorContext {
+                message: message.into(),
+                request: None,
+                source: None,
+            },
+        }
+    }
+
+    /// 返回该错误对应的细分类型标识。
+    #[must_use]
+    pub fn kind(&self) -> K
+    where
+        K: Copy,
+    {
+        self.kind
+    }
+
+    /// 返回不含 HTTP 状态码后缀的错误主消息。
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.context.message
+    }
+
+    /// 返回触发该错误时的 HTTP 请求诊断上下文（若存在）。
+    #[must_use]
+    pub fn request(&self) -> Option<&RequestContext> {
+        self.context.request.as_deref()
+    }
+
+    fn with_source(mut self, source: impl StdError + Send + Sync + 'static) -> Self {
+        self.context.source = Some(Box::new(source));
+        self
+    }
+}
+
+impl<K> fmt::Display for ErrorDetails<K> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.context.fmt(formatter)
+    }
+}
+
+impl<K: fmt::Debug> StdError for ErrorDetails<K> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.context.source()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{message}{}", status_suffix(.request.as_deref()))]
+struct ErrorContext {
+    message: String,
+    request: Option<Arc<RequestContext>>,
+    #[source]
+    source: Option<Box<dyn StdError + Send + Sync>>,
+}
+
+/// 校园服务客户端统一错误类型。
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum Error {
+    /// 网络连接、超时或底层 HTTP 传输失败。
+    #[error(transparent)]
+    Transport(TransportError),
+    /// 服务端返回非成功的 HTTP 状态码。
+    #[error(transparent)]
+    Http(HttpError),
+    /// 响应正文、HTML、JSON、`Base64URL` 或协议字段解析失败。
+    #[error(transparent)]
+    Decode(DecodeError),
+    /// 调用方传入的参数格式或取值不符合要求。
+    #[error(transparent)]
+    InvalidInput(InvalidInputError),
+    /// 登录失败、未登录、令牌失效或多因素认证未通过。
+    #[error(transparent)]
+    Authentication(AuthenticationError),
+    /// 远端服务正常响应但返回了业务级拒绝或失败状态。
+    #[error(transparent)]
+    Remote(RemoteError),
+    /// 请求的目标资源（如指定学期 ID）不存在。
+    #[error(transparent)]
+    NotFound(NotFoundError),
+    /// RSA、SM2 或 SM4 密钥解析与加解密运算失败。
+    #[error(transparent)]
+    Crypto(CryptoError),
+}
+
+impl Error {
+    fn context(&self) -> &ErrorContext {
+        match self {
+            Self::Transport(error) => &error.context,
+            Self::Http(error) => &error.context,
+            Self::Decode(error) => &error.context,
+            Self::InvalidInput(error) => &error.context,
+            Self::Authentication(error) => &error.context,
+            Self::Remote(error) => &error.context,
+            Self::NotFound(error) => &error.context,
+            Self::Crypto(error) => &error.context,
+        }
+    }
+
+    fn context_mut(&mut self) -> &mut ErrorContext {
+        match self {
+            Self::Transport(error) => &mut error.context,
+            Self::Http(error) => &mut error.context,
+            Self::Decode(error) => &mut error.context,
+            Self::InvalidInput(error) => &mut error.context,
+            Self::Authentication(error) => &mut error.context,
+            Self::Remote(error) => &mut error.context,
+            Self::NotFound(error) => &mut error.context,
+            Self::Crypto(error) => &mut error.context,
+        }
+    }
+
+    /// 返回不含 HTTP 状态码后缀的错误主消息。
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.context().message
+    }
+
+    /// 返回关联的 HTTP 请求诊断上下文（若该错误源自某次 HTTP 请求）。
+    #[must_use]
+    pub fn request(&self) -> Option<&RequestContext> {
+        self.context().request.as_deref()
+    }
+
+    /// 判断是否为网络传输层错误（[`Self::Transport`]）。
+    #[must_use]
+    pub fn is_transport(&self) -> bool {
+        matches!(self, Self::Transport(_))
+    }
+
+    /// 判断是否为非成功 HTTP 状态错误（[`Self::Http`]）。
+    #[must_use]
+    pub fn is_http(&self) -> bool {
+        matches!(self, Self::Http(_))
+    }
+
+    /// 判断是否为响应或协议数据解码错误（[`Self::Decode`]）。
+    #[must_use]
+    pub fn is_decode(&self) -> bool {
+        matches!(self, Self::Decode(_))
+    }
+
+    /// 判断是否为调用方输入参数校验错误（[`Self::InvalidInput`]）。
+    #[must_use]
+    pub fn is_invalid_input(&self) -> bool {
+        matches!(self, Self::InvalidInput(_))
+    }
+
+    /// 判断是否为身份认证相关错误（[`Self::Authentication`]）。
+    #[must_use]
+    pub fn is_authentication(&self) -> bool {
+        matches!(self, Self::Authentication(_))
+    }
+
+    /// 判断是否因尚未登录而失败（[`AuthenticationErrorKind::NotAuthenticated`]）。
+    #[must_use]
+    pub fn is_not_authenticated(&self) -> bool {
+        matches!(self, Self::Authentication(error) if error.kind() == AuthenticationErrorKind::NotAuthenticated)
+    }
+
+    /// 判断是否需要完成多因素认证（[`AuthenticationErrorKind::MfaRequired`]）。
+    #[must_use]
+    pub fn is_mfa_required(&self) -> bool {
+        matches!(self, Self::Authentication(error) if error.kind() == AuthenticationErrorKind::MfaRequired)
+    }
+
+    /// 判断是否为远端服务业务错误（[`Self::Remote`]）。
+    #[must_use]
+    pub fn is_remote(&self) -> bool {
+        matches!(self, Self::Remote(_))
+    }
+
+    /// 判断是否为目标资源不存在错误（[`Self::NotFound`]）。
+    #[must_use]
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound(_))
+    }
+
+    /// 判断是否为密码学处理错误（[`Self::Crypto`]）。
+    #[must_use]
+    pub fn is_crypto(&self) -> bool {
+        matches!(self, Self::Crypto(_))
+    }
+
+    /// 判断是否为网络传输超时错误（[`TransportErrorKind::Timeout`]）。
+    #[must_use]
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::Transport(error) if error.kind() == TransportErrorKind::Timeout)
+    }
+
+    /// 返回稳定的蛇形命名错误大类标识符（与 JSON 序列化中的 `code` 字段一致）。
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Transport(_) => "transport",
+            Self::Http(_) => "http",
+            Self::Decode(_) => "decode",
+            Self::InvalidInput(_) => "invalid_input",
+            Self::Authentication(_) => "authentication",
+            Self::Remote(_) => "remote",
+            Self::NotFound(_) => "not_found",
+            Self::Crypto(_) => "crypto",
+        }
+    }
+
+    pub(crate) fn invalid_input(message: String) -> Self {
+        Self::InvalidInput(ErrorDetails::new(InvalidInputErrorKind::Unknown, message))
+    }
+    pub(crate) fn not_authenticated() -> Self {
+        Self::authentication(
+            AuthenticationErrorKind::NotAuthenticated,
+            "需要先登录".into(),
+        )
+    }
+    pub(crate) fn authentication(kind: AuthenticationErrorKind, message: String) -> Self {
+        Self::Authentication(ErrorDetails::new(kind, message))
+    }
+    pub(crate) fn http(message: String) -> Self {
+        Self::Http(ErrorDetails::new(HttpErrorKind::Unknown, message))
+    }
+    pub(crate) fn mfa_required() -> Self {
+        Self::authentication(
+            AuthenticationErrorKind::MfaRequired,
+            "需要完成 MFA 验证".into(),
+        )
+    }
+    pub(crate) fn invalid_mfa_state(message: String) -> Self {
+        Self::authentication(AuthenticationErrorKind::InvalidMfaState, message)
+    }
+    pub(crate) fn remote(message: String) -> Self {
+        Self::Remote(ErrorDetails::new(RemoteErrorKind::Unknown, message))
+    }
+    pub(crate) fn not_found(message: String) -> Self {
+        Self::NotFound(ErrorDetails::new(NotFoundErrorKind::Unknown, message))
+    }
+    pub(crate) fn crypto(message: String) -> Self {
+        Self::Crypto(ErrorDetails::new(CryptoErrorKind::Unknown, message))
+    }
+    pub(crate) fn decode_message(message: String) -> Self {
+        Self::Decode(ErrorDetails::new(DecodeErrorKind::Unknown, message))
+    }
+
+    pub(crate) fn crypto_source(source: impl StdError + Send + Sync + 'static) -> Self {
+        Self::Crypto(
+            ErrorDetails::new(CryptoErrorKind::Unknown, "加密处理失败").with_source(source),
+        )
+    }
+    pub(crate) fn with_request(mut self, context: Arc<RequestContext>) -> Self {
+        self.context_mut().request = Some(context);
+        self
+    }
+    pub(crate) fn into_authentication(self, kind: AuthenticationErrorKind) -> Self {
+        let context = match self {
+            Self::Http(error) => error.context,
+            Self::Remote(error) => error.context,
+            error => return error,
+        };
+        Self::Authentication(ErrorDetails { kind, context })
+    }
+    pub(crate) fn decode(source: impl StdError + Send + Sync + 'static) -> Self {
+        Self::Decode(
+            ErrorDetails::new(DecodeErrorKind::Unknown, "响应解析失败").with_source(source),
+        )
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        if error.is_builder() {
+            return Self::InvalidInput(
+                ErrorDetails::new(InvalidInputErrorKind::Unknown, "请求参数无效")
+                    .with_source(error.without_url()),
+            );
+        }
+        let kind = if error.is_timeout() {
+            TransportErrorKind::Timeout
+        } else if error.is_connect() {
+            TransportErrorKind::Connection
+        } else {
+            TransportErrorKind::Unknown
+        };
+        Self::Transport(ErrorDetails::new(kind, "网络请求失败").with_source(error.without_url()))
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(error: serde_json::Error) -> Self {
+        Self::decode(error)
+    }
+}
+
+fn status_suffix(context: Option<&RequestContext>) -> String {
+    context
+        .and_then(|context| context.status_code)
+        .map(|status| format!(" (HTTP {status})"))
+        .unwrap_or_default()
+}
+
+impl Serialize for Error {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Error", 4)?;
+        state.serialize_field("code", self.code())?;
+        match self {
+            Self::Transport(error) => state.serialize_field("kind", &error.kind())?,
+            Self::Http(error) => state.serialize_field("kind", &error.kind())?,
+            Self::Decode(error) => state.serialize_field("kind", &error.kind())?,
+            Self::InvalidInput(error) => state.serialize_field("kind", &error.kind())?,
+            Self::Authentication(error) => state.serialize_field("kind", &error.kind())?,
+            Self::Remote(error) => state.serialize_field("kind", &error.kind())?,
+            Self::NotFound(error) => state.serialize_field("kind", &error.kind())?,
+            Self::Crypto(error) => state.serialize_field("kind", &error.kind())?,
+        }
+        state.serialize_field("message", &self.to_string())?;
+        state.serialize_field("context", &self.request())?;
+        state.end()
+    }
+}

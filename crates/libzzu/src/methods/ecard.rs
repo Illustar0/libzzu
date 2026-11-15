@@ -4,7 +4,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use zzu_core::ecard::{
+use zzu::ecard::{
     EcardClient, PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeConfig,
     RechargeOrder, RoomId,
 };

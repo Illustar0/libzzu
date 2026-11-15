@@ -14,7 +14,7 @@ use tokio::{
     runtime::{Builder, Handle, Runtime},
     sync::watch,
 };
-use zzu_core::TrustRoots;
+use zzu::TrustRoots;
 
 use crate::{
     buffer::ZzuBuffer,

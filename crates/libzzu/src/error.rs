@@ -1,7 +1,7 @@
 use std::{error::Error as _, time::Duration};
 
 use serde::Serialize;
-use zzu_core::{AuthenticationErrorKind, Error, RequestContext, TransportErrorKind};
+use zzu::{AuthenticationErrorKind, Error, RequestContext, TransportErrorKind};
 
 /// C ABI 统一使用的状态码类型（`ZZU_OK` 表示成功，非零表示失败大类）。
 ///

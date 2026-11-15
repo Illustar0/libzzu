@@ -11,7 +11,7 @@ crate-type = ["cdylib", "staticlib"]
 doc = false
 
 [dependencies]
-zzu-core.workspace = true
+zzu.workspace = true
 jiff.workspace = true
 futures-util.workspace = true
 serde.workspace = true

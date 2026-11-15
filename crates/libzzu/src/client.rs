@@ -9,7 +9,7 @@ use std::{
 };
 
 use tokio::sync::watch;
-use zzu_core::TrustRoots;
+use zzu::TrustRoots;
 
 use crate::{
     buffer::ZzuBuffer,

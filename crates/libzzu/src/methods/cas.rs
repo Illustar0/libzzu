@@ -4,7 +4,7 @@ use std::{
 };
 
 use serde::Deserialize;
-use zzu_core::auth::{CasClient, Service, Tokens};
+use zzu::auth::{CasClient, Service, Tokens};
 
 use super::{done, parse, reply};
 use crate::{

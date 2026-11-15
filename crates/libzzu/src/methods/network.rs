@@ -6,7 +6,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use zzu_core::{
+use zzu::{
     TrustRoots,
     network::{
         self, AuthResult, PortalClient, PortalEncryption, PortalSourceAddress, SelfServiceClient,
@@ -109,7 +109,7 @@ impl Service for PortalClient {
     }
 }
 
-/// Portal 探测发生在 `ZzuPortalClient` 创建之前，所以是 core 中的自由函数，这里单独成服务。
+/// Portal 探测发生在 `ZzuPortalClient` 创建之前，所以是 `zzu` 中的自由函数，这里单独成服务。
 struct PortalDiscovery(TrustRoots);
 
 impl Service for PortalDiscovery {

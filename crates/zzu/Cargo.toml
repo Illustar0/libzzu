@@ -2,11 +2,34 @@
 name = "zzu"
 version.workspace = true
 edition.workspace = true
-description = "Rust API for zzu"
+description = "Async Rust client for zzu campus services"
 license.workspace = true
 
 [dependencies]
-zzu-core.workspace = true
+base64.workspace = true
+jiff.workspace = true
+ecb.workspace = true
+encoding_rs.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+icalendar.workspace = true
+libsm.workspace = true
+pem.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rsa.workspace = true
+rust_decimal.workspace = true
+scraper.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sm4.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros"] }
 
 [lints]
 workspace = true

@@ -2,7 +2,7 @@ use std::ffi::{c_char, c_void};
 
 use jiff::civil::Date;
 use serde::Deserialize;
-use zzu_core::eas::{TeachingWeeks as Timetable, UndergradEasClient};
+use zzu::eas::{TeachingWeeks as Timetable, UndergradEasClient};
 
 use super::{Guarded, ZzuCasClient, done, parse, reply};
 use crate::{

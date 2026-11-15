@@ -8,7 +8,7 @@
 
 ### 句柄拓扑与符号设计
 
-`libzzu` 的不透明句柄与 `zzu-core` 中的领域客户端一一对应，不合并为单一聚合客户端。各服务的认证前提与生命周期彼此独立：本科教务（`ZzuEasClient`）与校园卡（`ZzuEcardClient`）派生自统一身份认证客户端（`ZzuCasClient`），共享其认证会话、后台运行时与操作时限；校园网 Portal（`ZzuPortalClient`）与自助服务（`ZzuSelfServiceClient`）则直接挂载在运行时（`ZzuRuntime`）下，不依赖 CAS 账号。上层 SDK 封装应保持这一类型结构。
+`libzzu` 的不透明句柄与 `zzu` 中的领域客户端一一对应，不合并为单一聚合客户端。各服务的认证前提与生命周期彼此独立：本科教务（`ZzuEasClient`）与校园卡（`ZzuEcardClient`）派生自统一身份认证客户端（`ZzuCasClient`），共享其认证会话、后台运行时与操作时限；校园网 Portal（`ZzuPortalClient`）与自助服务（`ZzuSelfServiceClient`）则直接挂载在运行时（`ZzuRuntime`）下，不依赖 CAS 账号。上层 SDK 封装应保持这一类型结构。
 
 ```text
 ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_new
@@ -392,7 +392,7 @@ zzu_runtime_free(runtime);
 
 ## 本地数据函数
 
-以下三个导出函数对应 `zzu-core` 数据模型上的纯计算逻辑，无需 `ZzuRuntime`、客户端句柄或登录态，不发起网络请求，在当前线程同步返回。返回 `ZZU_OK` 时 `*out_payload` 为结果 JSON，否则为错误 JSON（`out_payload` 传 `NULL` 时返回 `ZZU_INVALID_INPUT`）。
+以下三个导出函数对应 `zzu` 数据模型上的纯计算逻辑，无需 `ZzuRuntime`、客户端句柄或登录态，不发起网络请求，在当前线程同步返回。返回 `ZZU_OK` 时 `*out_payload` 为结果 JSON，否则为错误 JSON（`out_payload` 传 `NULL` 时返回 `ZZU_INVALID_INPUT`）。
 
 | 函数 | 输入字节切片 | 成功结果 JSON | 说明 |
 | --- | --- | --- | --- |

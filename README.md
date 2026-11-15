@@ -1,15 +1,13 @@
 # zzu
 
-项目由三个 crate 组成：
+项目由两个 crate 组成：
 
 | Crate | 目录 | 职责 |
 | --- | --- | --- |
-| `libzzu` | `crates/libzzu` | 暴露 C ABI，生成动态库和静态库，供各语言 SDK 封装 |
-| `zzu` | `crates/zzu` | 提供给 Rust 项目使用的公共 API |
-| `zzu-core` | `crates/zzu-core` | 实现两个入口共享的核心逻辑 |
+| `zzu` | `crates/zzu` | 实现协议、会话与数据模型，并作为 Rust 项目使用的公共 API |
+| `libzzu` | `crates/libzzu` | 基于 `zzu` 暴露 C ABI，生成动态库和静态库，供各语言 SDK 封装 |
 
-依赖关系：`libzzu → zzu-core ← zzu`。共享逻辑放在 `zzu-core`，Rust
-入口和 C ABI 入口分别负责自己的公共接口。
+依赖关系：`libzzu → zzu`。
 
 ## Rust 使用
 
@@ -26,7 +24,7 @@ zzu = { path = "/path/to/libzzu/crates/zzu" }
 cargo build -p libzzu --release
 ```
 
-头文件为 `crates/libzzu/include/libzzu.h`。ABI 的句柄与 `zzu-core` 的客户端一一对应，
+头文件为 `crates/libzzu/include/libzzu.h`。ABI 的句柄与 `zzu` 的客户端一一对应，
 每种客户端有 `new`、`free`、`call`、`call_blocking` 四个函数，业务方法经 `call` 按方法名分发，
 参数与结果均为 JSON：
 
