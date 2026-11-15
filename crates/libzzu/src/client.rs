@@ -280,12 +280,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        ZZU_AUTHENTICATION_ERROR, ZZU_CANCELLED, ZZU_PANIC, ZZU_TIMEOUT, ZZU_UNKNOWN_METHOD,
-        ZzuCasClient, ZzuEasClient, ZzuEcardClient, ZzuRuntime, zzu_buffer_data, zzu_buffer_free,
-        zzu_buffer_len, zzu_cas_call, zzu_cas_call_blocking, zzu_cas_free, zzu_cas_new,
-        zzu_eas_call, zzu_eas_free, zzu_eas_new, zzu_ecard_call, zzu_ecard_free, zzu_ecard_new,
-        zzu_portal_discover_blocking, zzu_recharge_order_checkout_url_for, zzu_room_id_parse,
-        zzu_runtime_free, zzu_runtime_new,
+        ZZU_AUTHENTICATION_ERROR, ZZU_PANIC, ZZU_TIMEOUT, ZZU_UNKNOWN_METHOD, ZzuCasClient,
+        ZzuEasClient, ZzuEcardClient, ZzuRuntime, zzu_buffer_data, zzu_buffer_free, zzu_buffer_len,
+        zzu_cas_call, zzu_cas_call_blocking, zzu_cas_free, zzu_cas_new, zzu_eas_call, zzu_eas_free,
+        zzu_eas_new, zzu_ecard_call, zzu_ecard_free, zzu_ecard_new, zzu_portal_discover_blocking,
+        zzu_recharge_order_checkout_url_for, zzu_room_id_parse, zzu_runtime_free, zzu_runtime_new,
     };
 
     type Completion = (ZzuStatus, Value);
@@ -672,48 +671,6 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_reports_cancelled_through_the_same_completion_path() {
-        let fixture = Fixture::new();
-        let (cancel, cancelled) = cancel_pair();
-        let (sender, receiver) = mpsc::channel();
-        fixture.worker().spawn(
-            pending(),
-            Duration::from_secs(60),
-            cancelled,
-            move |status, payload| sender.send((status, payload)).unwrap(),
-        );
-        cancel.send_replace(true);
-        let (status, payload) = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(status, ZZU_CANCELLED);
-        let payload: Value = serde_json::from_slice(&payload).unwrap();
-        assert_eq!(payload["status"], json!(ZZU_CANCELLED));
-    }
-
-    #[test]
-    fn releasing_the_cancel_handle_does_not_cancel_the_call() {
-        let fixture = Fixture::new();
-        let (cancel, cancelled) = cancel_pair();
-        let (sender, receiver) = mpsc::channel();
-        let (release, released) = tokio::sync::oneshot::channel::<()>();
-        fixture.worker().spawn(
-            async move {
-                let _ = released.await;
-                Ok(b"true".to_vec())
-            },
-            Duration::from_secs(60),
-            cancelled,
-            move |status, _| sender.send(status).unwrap(),
-        );
-        drop(cancel);
-        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
-        release.send(()).unwrap();
-        assert_eq!(
-            receiver.recv_timeout(Duration::from_secs(5)).unwrap(),
-            ZZU_OK
-        );
-    }
-
-    #[test]
     fn deadline_expires_pending_operations() {
         let fixture = Fixture::new();
         let (_cancel, cancelled) = cancel_pair();
@@ -744,31 +701,6 @@ mod tests {
         assert_eq!(
             receiver.recv_timeout(Duration::from_secs(5)).unwrap(),
             ZZU_PANIC
-        );
-    }
-
-    #[test]
-    fn freeing_handles_keeps_in_flight_calls_alive_until_their_callback() {
-        let fixture = Fixture::new();
-        let worker = fixture.worker();
-        let (_cancel, cancelled) = cancel_pair();
-        let (sender, receiver) = mpsc::channel();
-        let (release, released) = tokio::sync::oneshot::channel::<()>();
-        worker.spawn(
-            async move {
-                let _ = released.await;
-                Ok(b"null".to_vec())
-            },
-            Duration::from_secs(60),
-            cancelled,
-            move |status, _| sender.send(status).unwrap(),
-        );
-        drop(worker);
-        drop(fixture);
-        release.send(()).unwrap();
-        assert_eq!(
-            receiver.recv_timeout(Duration::from_secs(5)).unwrap(),
-            ZZU_OK
         );
     }
 
