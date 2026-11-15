@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 description = "Async Rust client for zzu campus services"
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 base64.workspace = true

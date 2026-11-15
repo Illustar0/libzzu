@@ -6,6 +6,7 @@ resolver = "3"
 version = "0.0.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/Illustar0/libzzu"
 
 [workspace.dependencies]
 zzu = { version = "0.0.0", path = "crates/zzu" }

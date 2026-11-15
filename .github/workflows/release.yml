@@ -56,8 +56,36 @@ jobs:
     with:
       version: ${{ needs.prepare.outputs.version }}
 
-  release:
+  publish:
     needs: [prepare, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-edit
+
+      - name: Set crate versions
+        run: cargo set-version --workspace "${{ needs.prepare.outputs.version }}"
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish zzu
+        run: cargo publish --package zzu --allow-dirty
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  release:
+    needs: [prepare, package, publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
