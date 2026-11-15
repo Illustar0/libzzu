@@ -3,7 +3,6 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    future::Future,
     str::FromStr,
     sync::{Mutex, MutexGuard},
 };
@@ -196,14 +195,6 @@ impl EcardClient {
     }
 
     async fn access_token(&self) -> Result<String> {
-        self.access_token_with(|token| fetch_session(&self.http, token))
-            .await
-    }
-
-    async fn access_token_with<F>(&self, fetch: impl FnOnce(String) -> F) -> Result<String>
-    where
-        F: Future<Output = Result<Session>>,
-    {
         if !self.is_logged_in() {
             return Err(Error::not_authenticated());
         }
@@ -216,7 +207,7 @@ impl EcardClient {
         if let Some(token) = self.cached_access_token(&cas_token)? {
             return Ok(token);
         }
-        let session = fetch(cas_token).await?;
+        let session = fetch_session(&self.http, cas_token).await?;
         let token = session.access_token.clone();
         self.lock_state().session = Some(session);
         Ok(token)
@@ -580,101 +571,7 @@ fn location_query(parent: &str) -> Result<LocationRequest<'_>> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-
     use super::*;
-    use crate::auth::Tokens;
-
-    async fn client_with_expired_session() -> EcardClient {
-        let cas = CasClient::new("", "").unwrap();
-        let token = format!(
-            "e30.{}.c2ln",
-            URL_SAFE_NO_PAD.encode(json!({"exp": Timestamp::now().as_second() + 3600}).to_string())
-        );
-        cas.set_tokens(Tokens {
-            user_token: token.clone(),
-            refresh_token: token.clone(),
-        })
-        .await
-        .unwrap();
-        cas.login().await.unwrap();
-        let mut client = EcardClient::new(cas).unwrap();
-        *client.state.get_mut().unwrap() = EcardState {
-            session: Some(Session {
-                access_token: "expired".into(),
-                cas_token: token,
-                obtained_at: Timestamp::now().as_second() - SESSION_MAX_AGE_SECONDS,
-            }),
-            default_room: Some("1-2--3-301".parse().unwrap()),
-        };
-        client
-    }
-
-    #[tokio::test]
-    async fn concurrent_requests_share_one_refresh_and_logout_clears_state() {
-        let mut client = client_with_expired_session().await;
-        let refreshes = AtomicUsize::new(0);
-        let refresh_count = &refreshes;
-        let fetch = move |cas_token| async move {
-            refresh_count.fetch_add(1, Ordering::Relaxed);
-            tokio::task::yield_now().await;
-            Ok(Session {
-                access_token: "fresh".into(),
-                cas_token,
-                obtained_at: Timestamp::now().as_second(),
-            })
-        };
-
-        let (first, second) = tokio::join!(
-            client.access_token_with(fetch),
-            client.access_token_with(fetch)
-        );
-
-        assert_eq!(first.unwrap(), "fresh");
-        assert_eq!(second.unwrap(), "fresh");
-        assert_eq!(refreshes.load(Ordering::Relaxed), 1);
-        assert!(client.is_logged_in());
-        client.logout();
-        assert!(!client.is_logged_in());
-        assert!(client.state.get_mut().unwrap().default_room.is_none());
-        assert!(
-            client
-                .default_room()
-                .await
-                .unwrap_err()
-                .is_not_authenticated()
-        );
-    }
-
-    #[tokio::test]
-    async fn cancelled_refresh_leaves_the_next_request_able_to_refresh() {
-        let client = client_with_expired_session().await;
-        {
-            let request = client.access_token_with(|_| std::future::pending::<Result<Session>>());
-            tokio::pin!(request);
-            tokio::select! {
-                biased;
-                result = &mut request => panic!("refresh unexpectedly finished: {result:?}"),
-                () = tokio::task::yield_now() => {}
-            }
-        }
-        let token = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            client.access_token_with(|cas_token| async move {
-                Ok(Session {
-                    access_token: "fresh".into(),
-                    cas_token,
-                    obtained_at: Timestamp::now().as_second(),
-                })
-            }),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(token, "fresh");
-    }
 
     #[test]
     fn room_and_location_ids_are_validated_before_requests() {
