@@ -329,7 +329,7 @@ zzu_runtime_free(runtime);
 | `balance` | 无 | `string` | 查询校园卡账户余额（单位：元，十进制字符串，如 `"12.34"`） |
 | `locations` | `parent: string` | `{"id": string, "name": string}[]` | 按层级检索电控位置目录（按 `id` 字典序升序排列，`area`、`building`、`level` 各段均非空且不含 `-`）：`parent` 依次传 `""`（区域）、`"area"`（如 `"1"`，楼栋）、`"area-building"`（如 `"1-2"`，单元/楼层）、`"area-building--level"`（如 `"1-2--3"`，房间，返回的 `id` 为合法房间号）；格式不符返回 `ZZU_INVALID_INPUT` |
 | `remaining_energy` | `room?: string` | `number` | 查询指定房间（省略时取 `default_room`）的剩余电量（`float64`，单位：度） |
-| `recharge_energy` | `paymentPassword: string`、`amount: integer`、`room: string` | `null` | 使用校园卡支付密码从卡余额扣款充入电费；`amount` 为正整数元（`uint32`），`room` 为合法房间号。若响应缺失确认字段将返回 `ZZU_DECODE_ERROR`，重试前须先查余额 |
+| `recharge_energy` | `paymentPassword: string`、`amount: integer`、`room: string` | `null` | 使用校园卡支付密码从卡余额扣款充入电费；`amount` 为正整数元（`uint32`），`room` 为合法房间号。若响应缺失确认字段将返回 `ZZU_DECODE_ERROR`，加密响应解密失败将返回 `ZZU_CRYPTO_ERROR`，两者扣款结果均未知，重试前须先查余额 |
 | `recharge_config` | 无 | `{"amounts": uint32[], "isBrowserPaymentEnabled": boolean}` | 查询校园卡充值可选面额列表（元）及网页收银台充值开关状态 |
 | `create_recharge_order` | `amount: integer` | `Order` | 创建指定正整数元（`uint32`）的校园卡充值订单；网页充值未开放时返回 `ZZU_REMOTE_ERROR` |
 | `payment_channels` | `order: Order` | `Channel[]` | 查询该订单在学校收银台可用的支付渠道列表 |

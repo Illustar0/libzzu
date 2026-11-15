@@ -8,7 +8,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use jiff::Timestamp;
+use jiff::{Timestamp, tz::TimeZone};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -345,13 +345,15 @@ impl EcardClient {
 
     /// 使用校园卡支付密码从卡余额扣款，为指定宿舍房间充值电费。
     ///
-    /// `amount` 为正整数充值金额（单位：元）；支付参数在提交前会自动获取服务端临时公钥并完成国密加密。
+    /// `amount` 为正整数充值金额（单位：元）。提交前会申请一次性交易号与服务端临时 SM2 公钥，
+    /// 用公钥加密支付参数与本地随机生成的 SM4 密钥；服务端返回加密响应时再用该 SM4 密钥解密。
     ///
     /// # Errors
     ///
     /// - 当 `amount == 0` 或 `payment_password` 为空字符串时返回 [`Error::InvalidInput`]。
-    /// - 当客户端尚未登录、支付密钥解析或加密失败、网络异常或远端拒绝扣款时返回相应错误。
-    /// - 若支付响应缺失 `success` 确认字段导致扣款结果未知，返回 [`Error::Decode`]；调用方应先核对余额再决定是否重试。
+    /// - 当客户端尚未登录、公钥解析或加解密失败、网络异常或远端拒绝扣款时返回相应错误。
+    /// - 若支付响应缺失 `success` 确认字段导致扣款结果未知，返回 [`Error::Decode`]；加密响应解密失败时返回的
+    ///   [`Error::Crypto`] 同样意味着结果未知。两种情况下调用方都应先核对余额再决定是否重试。
     pub async fn recharge_energy(
         &mut self,
         payment_password: &str,
@@ -374,6 +376,7 @@ impl EcardClient {
             amt: String,
             timestamp: i64,
             customfield: BTreeMap<String, String>,
+            app_id: &'a str,
         }
         if amount == 0 || payment_password.is_empty() {
             return Err(Error::invalid_input(
@@ -384,7 +387,8 @@ impl EcardClient {
         let request = self
             .http
             .post(format!("{ECARD_URL}/auth/getEncrypt"))
-            .header("Authorization", &token);
+            .header("Authorization", &token)
+            .json(&json!({"protocolVersion":2}));
         let response = http::json(request).await?;
         let encryption: Encryption = http::ecard_data(response)?;
         let payment = Payment {
@@ -394,31 +398,70 @@ impl EcardClient {
             amt: amount.to_string(),
             timestamp: Timestamp::now().as_millisecond(),
             customfield: BTreeMap::new(),
+            app_id: "electric",
         };
-        let params =
-            crypto::payment_encrypt(&encryption.public_key, &serde_json::to_vec(&payment)?)?;
+        let sm4_key = crypto::random_sm4_key();
+        let body = json!({
+            "id": encryption.id,
+            "params": crypto::sm2_encrypt(&encryption.public_key, &serde_json::to_vec(&payment)?)?,
+            "sm4Key": crypto::sm2_encrypt(&encryption.public_key, sm4_key.as_bytes())?,
+        });
+        let transaction_id = self.transaction_id(&token).await?;
         let response = http::json(
             self.http
                 .post(format!("{ECARD_URL}/utilities/pay"))
                 .header("Authorization", token)
-                .json(&json!({"id":encryption.id,"params":params})),
+                .header("transactionId", transaction_id)
+                .json(&body),
         )
         .await?;
-        match response.get("success").and_then(Value::as_bool) {
+        let context = response.context.clone();
+        let result = decrypt_response(&response, &sm4_key)
+            .map_err(|error| error.with_request(context.clone()))?;
+        match result.get("success").and_then(Value::as_bool) {
             Some(true) => Ok(()),
-            Some(false) => {
-                Err(Error::remote(http::message(&response)).with_request(response.context))
-            }
+            Some(false) => Err(Error::remote(http::message(&result)).with_request(context)),
             None => Err(Error::decode_message(
                 "充值响应缺少 success，支付结果未知，请查询余额后再决定是否重试".into(),
             )
-            .with_request(response.context)),
+            .with_request(context)),
         }
+    }
+
+    /// 申请 `/utilities/pay`、`/recharge/pay` 等扣款接口请求头 `transactionId` 所需的一次性交易号。
+    async fn transaction_id(&self, token: &str) -> Result<String> {
+        let datetime = Timestamp::now()
+            .to_zoned(TimeZone::get("Asia/Shanghai").map_err(Error::decode)?)
+            .strftime("%F %T")
+            .to_string();
+        let response = http::json(
+            self.http
+                .post(format!("{ECARD_URL}/consume/transaction"))
+                .header("Authorization", token)
+                .json(&json!({"datetime":datetime})),
+        )
+        .await?;
+        let transaction_id: String = http::ecard_data(response)?;
+        if transaction_id.is_empty() {
+            return Err(Error::decode_message("扣款交易号为空".into()));
+        }
+        Ok(transaction_id)
     }
 
     /// 清除本地缓存的校园卡会话与默认房间信息（不影响底层共享的 [`CasClient`]）。
     pub fn logout(&mut self) {
         *self.lock_state() = EcardState::default();
+    }
+}
+
+/// 还原校园卡加密响应：与前端一致，`success` 不为真且带非空 `data` 时，用请求时生成的 SM4 密钥解密 `data` 得到实际响应。
+fn decrypt_response(response: &Value, sm4_key: &str) -> Result<Value> {
+    let is_success = response.get("success").and_then(Value::as_bool) == Some(true);
+    match response.get("data").and_then(Value::as_str) {
+        Some(data) if !is_success && !data.is_empty() => Ok(serde_json::from_slice(
+            &crypto::sm4_decrypt(data, sm4_key)?,
+        )?),
+        _ => Ok(response.clone()),
     }
 }
 

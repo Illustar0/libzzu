@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt, net::IpAddr, sync::Arc};
 
-use jiff::{Timestamp, tz::TimeZone};
+use jiff::Timestamp;
 use reqwest::Url;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -191,10 +191,6 @@ impl EcardClient {
     /// - 当客户端尚未登录、网络请求失败，或返回的订单流水号与请求金额不一致时返回相应错误。
     pub async fn create_recharge_order(&mut self, amount: u32) -> Result<RechargeOrder> {
         #[derive(Serialize)]
-        struct Transaction {
-            datetime: String,
-        }
-        #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Recharge<'a> {
             pay_code: &'a str,
@@ -213,26 +209,7 @@ impl EcardClient {
             return Err(Error::decode_message("充值配置缺少支付代码".into()));
         }
         let token = self.access_token().await?;
-        let now = Timestamp::now();
-        let transaction = Transaction {
-            datetime: now
-                .to_zoned(TimeZone::get("Asia/Shanghai").map_err(Error::decode)?)
-                .strftime("%F %T")
-                .to_string(),
-        };
-        let response = http::json(
-            self.http
-                .post(format!("{ECARD_URL}/consume/transaction"))
-                .header("Authorization", &token)
-                .json(&transaction),
-        )
-        .await?;
-        let transaction_id: String = http::ecard_data(response)?;
-        if transaction_id.is_empty() {
-            return Err(Error::decode_message(
-                "充值请求的 transactionid 为空".into(),
-            ));
-        }
+        let transaction_id = self.transaction_id(&token).await?;
         let recharge = Recharge {
             pay_code: &config.pay_code,
             amt: amount.to_string(),

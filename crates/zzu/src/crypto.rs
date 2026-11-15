@@ -4,6 +4,7 @@ use base64::{
 };
 use ecb::cipher::{BlockDecryptMut, KeyInit, block_padding::Pkcs7};
 use libsm::sm2::{encrypt::EncryptCtx, signature::SigCtx};
+use rand::Rng;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey};
 use serde::Deserialize;
 
@@ -62,23 +63,43 @@ pub(crate) fn jwt_expiration(token: &str) -> Result<i64> {
     Ok(expiration)
 }
 
-pub(crate) fn payment_encrypt(public_key: &str, plaintext: &[u8]) -> Result<String> {
-    let ciphertext = STANDARD.decode(public_key).map_err(Error::crypto_source)?;
-    let decrypted = ecb::Decryptor::<sm4::Sm4>::new(b"w687-9+3C_H&je_5".into())
-        .decrypt_padded_vec_mut::<Pkcs7>(&ciphertext)
-        .map_err(|_| Error::crypto("SM4 密文或 PKCS#7 填充无效".into()))?;
-    let key_hex = std::str::from_utf8(&decrypted).map_err(Error::crypto_source)?;
-    let key_bytes = hex::decode(key_hex).map_err(Error::crypto_source)?;
+const SM4_KEY_ALPHABET: &[u8] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+-=";
+
+pub(crate) fn sm2_encrypt(public_key: &str, plaintext: &[u8]) -> Result<String> {
+    let mut key_bytes = hex::decode(public_key).map_err(Error::crypto_source)?;
+    // sm-crypto 同时接受带与不带 `04` 前缀的未压缩公钥。
+    if key_bytes.len() == 64 {
+        key_bytes.insert(0, 0x04);
+    }
     let key = SigCtx::new()
         .load_pubkey(&key_bytes)
         .map_err(|error| Error::crypto(error.to_string()))?;
     let encrypted = EncryptCtx::new(plaintext.len(), key)
         .encrypt(plaintext)
         .map_err(|error| Error::crypto(error.to_string()))?;
-    // gmalg uses C1C3C2 and the payment endpoint omits C1's 0x04 prefix.
+    // libsm 输出 C1C2C3，需改排为 C1C3C2 并去掉 C1 的 `0x04`。
     let (point, remainder) = encrypted.split_at(65);
     let (ciphertext, digest) = remainder.split_at(plaintext.len());
     Ok(hex::encode([&point[1..], digest, ciphertext].concat()))
+}
+
+pub(crate) fn random_sm4_key() -> String {
+    let mut rng = rand::rngs::OsRng;
+    (0..16)
+        .map(|_| char::from(SM4_KEY_ALPHABET[rng.gen_range(0..SM4_KEY_ALPHABET.len())]))
+        .collect()
+}
+
+pub(crate) fn sm4_decrypt(data: &str, key: &str) -> Result<Vec<u8>> {
+    let ciphertext = STANDARD.decode(data).map_err(Error::crypto_source)?;
+    let key: &[u8; 16] = key
+        .as_bytes()
+        .try_into()
+        .map_err(|_| Error::crypto("SM4 密钥必须为 16 字节".into()))?;
+    ecb::Decryptor::<sm4::Sm4>::new(key.into())
+        .decrypt_padded_vec_mut::<Pkcs7>(&ciphertext)
+        .map_err(|_| Error::crypto("SM4 密文或 PKCS#7 填充无效".into()))
 }
 
 #[cfg(test)]
@@ -114,25 +135,39 @@ mod tests {
     }
 
     #[test]
-    fn payment_ciphertext_matches_gmalg_layout() {
+    fn sm2_ciphertext_matches_sm_crypto_c1c3c2_layout() {
         let context = SigCtx::new();
         let (public, secret) = context.new_keypair().unwrap();
         let key_hex = hex::encode(context.serialize_pubkey(&public, false).unwrap());
-        let encrypted_key = ecb::Encryptor::<sm4::Sm4>::new(b"w687-9+3C_H&je_5".into())
-            .encrypt_padded_vec_mut::<Pkcs7>(key_hex.as_bytes());
         let plaintext = br#"{"amt":"1"}"#;
-        let wire =
-            hex::decode(payment_encrypt(&STANDARD.encode(encrypted_key), plaintext).unwrap())
-                .unwrap();
-        let (point, rest) = wire.split_at(64);
-        let (digest, ciphertext) = rest.split_at(32);
-        let native = [&[4][..], point, ciphertext, digest].concat();
+        for key in [key_hex.as_str(), &key_hex[2..]] {
+            let wire = hex::decode(sm2_encrypt(key, plaintext).unwrap()).unwrap();
+            let (point, rest) = wire.split_at(64);
+            let (digest, ciphertext) = rest.split_at(32);
+            let native = [&[4][..], point, ciphertext, digest].concat();
+            assert_eq!(
+                DecryptCtx::new(plaintext.len(), secret.clone())
+                    .decrypt(&native)
+                    .unwrap(),
+                plaintext
+            );
+        }
+        assert!(sm2_encrypt("not hex", plaintext).is_err());
+    }
+
+    #[test]
+    fn sm4_decrypt_uses_ascii_key_bytes() {
+        let key = random_sm4_key();
+        assert_eq!(key.len(), 16);
+        let plaintext = br#"{"success":true}"#;
+        let key_bytes: &[u8; 16] = key.as_bytes().try_into().unwrap();
+        let ciphertext = ecb::Encryptor::<sm4::Sm4>::new(key_bytes.into())
+            .encrypt_padded_vec_mut::<Pkcs7>(plaintext);
         assert_eq!(
-            DecryptCtx::new(plaintext.len(), secret)
-                .decrypt(&native)
-                .unwrap(),
+            sm4_decrypt(&STANDARD.encode(ciphertext), &key).unwrap(),
             plaintext
         );
-        assert!(payment_encrypt("AA==", plaintext).is_err());
+        assert!(sm4_decrypt("AA==", &key).is_err());
+        assert!(sm4_decrypt("AA==", "short").is_err());
     }
 }
