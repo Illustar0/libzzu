@@ -638,7 +638,7 @@ mod tests {
                 .is_decode()
         );
         assert!(
-            payment_action(json!({"request_type": "1", "request_content": "unknown"}))
+            payment_action(json!({"request_type": "1"}))
                 .unwrap_err()
                 .is_decode()
         );
