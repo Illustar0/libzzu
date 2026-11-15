@@ -54,8 +54,6 @@ pub enum UndergradEasService {
     StudentStatus,
     /// 培养方案完成情况。
     ProgramCompletion,
-    /// 选课。
-    CourseSelection,
     /// 考试查询。
     Exams,
     /// 学业预警查询。
@@ -81,7 +79,6 @@ impl UndergradEasService {
             Self::ProgramCompletion => {
                 "https://jwxt.zzu.edu.cn/eams-student-plan-complete-app/index.html"
             }
-            Self::CourseSelection => "https://jwxt.zzu.edu.cn/course-selection/index.html",
             Self::Exams => "https://jwxt.zzu.edu.cn/eams-exam-student-app/index.html",
             Self::AcademicWarnings => {
                 "https://jwxt.zzu.edu.cn/eams-study-precaution-search-app/index.html"
