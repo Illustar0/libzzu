@@ -56,7 +56,7 @@ class Build : FalloutBuild
     AbsolutePath DistDirectory => RootDirectory / "dist";
     AbsolutePath CargoTargetDirectory => RootDirectory / "target/package-build" / Platform;
     AbsolutePath BuildDirectory => CargoTargetDirectory / Platform / "release";
-    AbsolutePath PackageDirectory => DistDirectory / $"libzzu-{Version}-{Platform}";
+    AbsolutePath PackageDirectory => DistDirectory / $"libzzu-{Platform}";
 
     Target Format => target => target
         .Executes(() => Cargo("fmt --all -- --check", workingDirectory: RootDirectory, logger: LogToolOutput));
@@ -212,14 +212,14 @@ class Build : FalloutBuild
 
     Target Xcframework => target => target
         .DependsOn(ExtractIosPackages)
-        .Produces(DistDirectory / "libzzu-*-ios.tar.gz*")
+        .Produces(DistDirectory / "libzzu-ios-xcframework.tar.gz*")
         .Executes(() =>
         {
-            var device = DistDirectory / $"libzzu-{Version}-aarch64-apple-ios";
-            var armSimulator = DistDirectory / $"libzzu-{Version}-aarch64-apple-ios-sim";
-            var intelSimulator = DistDirectory / $"libzzu-{Version}-x86_64-apple-ios";
+            var device = DistDirectory / "libzzu-aarch64-apple-ios";
+            var armSimulator = DistDirectory / "libzzu-aarch64-apple-ios-sim";
+            var intelSimulator = DistDirectory / "libzzu-x86_64-apple-ios";
             var simulatorLibrary = TemporaryDirectory / "libzzu-ios-simulator.a";
-            var directory = DistDirectory / $"libzzu-{Version}-ios";
+            var directory = DistDirectory / "libzzu-ios-xcframework";
             Directory.CreateDirectory(directory);
             Run("xcrun", $"lipo -create {armSimulator / "lib/libzzu.a"} {intelSimulator / "lib/libzzu.a"} -output {simulatorLibrary}");
             Run("xcodebuild", $"-create-xcframework -library {device / "lib/libzzu.a"} -headers {device / "include"} -library {simulatorLibrary} -headers {armSimulator / "include"} -output {directory / "libzzu.xcframework"}");
