@@ -34,3 +34,7 @@ jobs:
 
       - name: Check
         run: dotnet run --project build --no-restore -- Check
+
+  package:
+    needs: check
+    uses: ./.github/workflows/package.yml
