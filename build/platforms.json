@@ -50,7 +50,9 @@
       },
       "rustflags": [
         "-C",
-        "link-arg=-Wl,-install_name,@rpath/libzzu.dylib"
+        "link-arg=-Wl,-install_name,@rpath/libzzu.dylib",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -62,7 +64,9 @@
       },
       "rustflags": [
         "-C",
-        "link-arg=-Wl,-install_name,@rpath/libzzu.dylib"
+        "link-arg=-Wl,-install_name,@rpath/libzzu.dylib",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -114,76 +118,132 @@
     {
       "target": "x86_64-pc-windows-gnu",
       "runner": "windows-2025",
-      "builder": "cargo"
+      "builder": "cargo",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "i686-pc-windows-gnu",
       "runner": "windows-2025",
-      "builder": "cargo"
+      "builder": "cargo",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "x86_64-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "aarch64-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "armv7-unknown-linux-gnueabihf",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "arm-unknown-linux-gnueabihf",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "i686-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "powerpc64le-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "mips-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
       "builder": "cross",
-      "build_std": true
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "mipsel-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
       "builder": "cross",
-      "build_std": true
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "mips64-unknown-linux-gnuabi64",
       "runner": "ubuntu-24.04",
       "builder": "cross",
-      "build_std": true
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "mips64el-unknown-linux-gnuabi64",
       "runner": "ubuntu-24.04",
       "builder": "cross",
-      "build_std": true
+      "build_std": true,
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "riscv64gc-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "s390x-unknown-linux-gnu",
       "runner": "ubuntu-24.04",
-      "builder": "cross"
+      "builder": "cross",
+      "rustflags": [
+        "-C",
+        "strip=symbols"
+      ]
     },
     {
       "target": "x86_64-unknown-linux-musl",
@@ -191,7 +251,9 @@
       "builder": "cross",
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -200,7 +262,9 @@
       "builder": "cross",
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -209,7 +273,9 @@
       "builder": "cross",
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -218,7 +284,9 @@
       "builder": "cross",
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -227,7 +295,9 @@
       "builder": "cross",
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -237,7 +307,9 @@
       "build_std": true,
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -247,7 +319,9 @@
       "build_std": true,
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -257,7 +331,9 @@
       "build_std": true,
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     },
     {
@@ -267,7 +343,9 @@
       "build_std": true,
       "rustflags": [
         "-C",
-        "target-feature=-crt-static"
+        "target-feature=-crt-static",
+        "-C",
+        "strip=symbols"
       ]
     }
   ]
