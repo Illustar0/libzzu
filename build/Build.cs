@@ -232,6 +232,9 @@ class Build : FalloutBuild
 
     static void CreateArchive(AbsolutePath directory)
     {
+        string[] licenses = ["LICENSE-MIT", "LICENSE-APACHE"];
+        foreach (var license in licenses)
+            File.Copy(RootDirectory / license, directory / license, true);
         var filename = $"{directory}.tar.gz";
         using (var file = File.Create(filename))
         using (var gzip = new GZipStream(file, CompressionLevel.SmallestSize))
