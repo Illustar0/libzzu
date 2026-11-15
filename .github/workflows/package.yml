@@ -70,12 +70,6 @@ jobs:
       - name: Restore build dependencies
         run: dotnet restore build/_build.csproj --locked-mode
 
-      - name: Configure MSVC
-        if: matrix.msvc_arch != null
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.msvc_arch }}
-
       - name: Set up Windows native tools
         if: runner.os == 'Windows'
         shell: pwsh

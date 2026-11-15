@@ -95,20 +95,17 @@
     {
       "target": "x86_64-pc-windows-msvc",
       "runner": "windows-2025",
-      "builder": "cargo",
-      "msvc_arch": "amd64"
+      "builder": "cargo"
     },
     {
       "target": "i686-pc-windows-msvc",
       "runner": "windows-2025",
-      "builder": "cargo",
-      "msvc_arch": "amd64_x86"
+      "builder": "cargo"
     },
     {
       "target": "aarch64-pc-windows-msvc",
       "runner": "windows-2025",
       "builder": "cargo",
-      "msvc_arch": "amd64_arm64",
       "environment": {
         "CC_aarch64_pc_windows_msvc": "clang-cl",
         "AR_aarch64_pc_windows_msvc": "llvm-lib"

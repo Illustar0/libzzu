@@ -83,8 +83,7 @@ class Build : FalloutBuild
                 include = platforms.Select(platform => new
                 {
                     target = platform.Target,
-                    runner = platform.Runner,
-                    msvc_arch = platform.MsvcArch
+                    runner = platform.Runner
                 })
             });
             Log.Information("{Matrix}", matrix);
