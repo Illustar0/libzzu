@@ -3,12 +3,12 @@ members = ["crates/libzzu", "crates/zzu", "crates/zzu-core"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-zzu-core = { version = "0.1.0", path = "crates/zzu-core" }
+zzu-core = { version = "0.0.0", path = "crates/zzu-core" }
 base64 = "0.22"
 jiff = { version = "0.2", features = ["serde", "tzdb-bundle-always"] }
 ecb = { version = "0.1", features = ["alloc"] }

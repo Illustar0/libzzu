@@ -1168,7 +1168,7 @@ dependencies = [
 
 [[package]]
 name = "libzzu"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "cbindgen",
  "futures-util",
@@ -3108,14 +3108,14 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zzu"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "zzu-core",
 ]
 
 [[package]]
 name = "zzu-core"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
  "ecb",

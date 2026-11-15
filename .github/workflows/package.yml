@@ -2,6 +2,11 @@ name: Package
 
 on:
   workflow_call:
+    inputs:
+      manifests:
+        description: Artifact with Cargo manifests that override the checked-out ones, such as release versions
+        type: string
+        default: ""
   workflow_dispatch:
 
 permissions:
@@ -48,6 +53,12 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+
+      - name: Apply Cargo manifests
+        if: inputs.manifests != ''
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: ${{ inputs.manifests }}
 
       - uses: actions/setup-dotnet@v6.0.0
         with:
@@ -99,6 +110,12 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+
+      - name: Apply Cargo manifests
+        if: inputs.manifests != ''
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: ${{ inputs.manifests }}
 
       - uses: actions/setup-dotnet@v6.0.0
         with:

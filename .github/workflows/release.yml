@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: release
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: taiki-e/install-action@v2.88.1
+        with:
+          tool: git-cliff@2.14.2
+
+      - name: Install cargo-edit
+        run: cargo install cargo-edit --locked --version 0.13.14
+
+      - name: Calculate next version
+        id: version
+        run: |
+          tag="$(git cliff --bumped-version)"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists; there are no releasable commits since it."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        run: git cliff --unreleased --tag "${{ steps.version.outputs.tag }}" --output release-notes.md
+
+      - name: Set crate versions
+        run: cargo set-version --workspace "${{ steps.version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-manifests
+          path: |
+            Cargo.toml
+            Cargo.lock
+            crates/*/Cargo.toml
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  package:
+    needs: prepare
+    uses: ./.github/workflows/package.yml
+    with:
+      manifests: release-manifests
+
+  release:
+    needs: [prepare, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: libzzu-*
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-notes
+
+      - uses: softprops/action-gh-release@v3.0.4
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ needs.prepare.outputs.tag }}
+          body_path: release-notes.md
+          files: dist/*.tar.gz*
+          fail_on_unmatched_files: true
