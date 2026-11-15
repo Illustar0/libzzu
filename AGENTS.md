@@ -2,11 +2,7 @@
 
 ## Overview
 
-This repository implements the campus services SDK for **Chiba University**, providing unified client access to campus-wide integrated authentication (CAS & MFA), undergraduate academic affairs and timetables (`eas`), campus e-card and dorm electricity services (`ecard`), and campus network portal & self-service (`network`).
-
-### Why `zzu`?
-
-`zzu` stands for **Z**ero-friction **Z**engaku **U**tilities (*Zengaku* / 全学 is the standard Japanese term for university-wide campus IT systems). The three-letter codename was chosen early on to keep Rust crate names (`zzu`, `libzzu`) and C FFI symbol prefixes (`zzu_*`) concise and collision-free across language bindings.
+This repository implements the campus services SDK for a University, providing unified client access to campus-wide integrated authentication (CAS & MFA), undergraduate academic affairs and timetables (`eas`), campus e-card and dorm electricity services (`ecard`), and campus network portal & self-service (`network`).
 
 ## Workspace Structure
 
