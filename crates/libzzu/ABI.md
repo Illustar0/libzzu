@@ -267,7 +267,7 @@ zzu_runtime_free(runtime);
 
 `Service` 参数取值：
 
-- 独立系统（字符串）：`"email"`（校园邮箱）、`"library"`（图书馆门户）、`"library_reservation"`（图书馆空间预约）、`"leave"`（学生请假系统）、`"president_mailbox"`（校长信箱）。其中 `"president_mailbox"` 在本地直接用当前 `userToken` 拼接 `?token=...` 地址，不发起网络请求；其余四项向门户或 CAS 请求单点登录重定向并原样提取响应 `Location` 头，缺少非空 `Location` 头时返回 `ZZU_DECODE_ERROR`。
+- 独立系统（字符串）：`"email"`（校园邮箱）、`"library"`（图书馆门户）、`"library_reservation"`（图书馆空间预约）、`"leave"`（学生请假系统）、`"president_mailbox"`（校长信箱）、`"ecard"`（校园卡）。其中 `"president_mailbox"` 与 `"ecard"` 在本地直接用当前 `userToken` 拼接 `token=...` 参数，不发起网络请求；其余四项向门户或 CAS 请求单点登录重定向并原样提取响应 `Location` 头，缺少非空 `Location` 头时返回 `ZZU_DECODE_ERROR`。
 - 本科教务子应用（对象 `{"undergrad_eas": "<app>"}`）：在本地用当前 `userToken` 直接拼接目标教务子应用的 `?idToken=...` 地址，不发起网络请求。`"<app>"` 可取 `"student_status"`（学籍信息查询）、`"program_completion"`（培养方案完成情况）、`"course_selection"`（选课）、`"exams"`（考试查询）、`"academic_warnings"`（学业预警查询）、`"grades"`（成绩查询）、`"timetable"`（课表查询）、`"course_offerings"`（全校开课查询）、`"school_calendar"`（校历）、`"available_classrooms"`（空闲教室查询）、`"classroom_timetable"`（教室课表）。
 
 `PersonalInfo` 结构：
