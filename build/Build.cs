@@ -87,8 +87,7 @@ class Build : FalloutBuild
                 })
             });
             Log.Information("{Matrix}", matrix);
-            if (Environment.GetEnvironmentVariable("GITHUB_OUTPUT") is { } output)
-                File.AppendAllText(output, $"matrix={matrix}{Environment.NewLine}");
+            SetGitHubOutput("matrix", matrix);
         });
 
     Target Toolchain => target => target
@@ -240,5 +239,12 @@ class Build : FalloutBuild
         using var archive = File.OpenRead(filename);
         File.WriteAllText($"{filename}.sha256", $"{Convert.ToHexStringLower(SHA256.HashData(archive))}  {Path.GetFileName(filename)}\n");
         Log.Information("Package: {Archive}", filename);
+        SetGitHubOutput("archive", directory.Name);
+    }
+
+    static void SetGitHubOutput(string name, string value)
+    {
+        if (Environment.GetEnvironmentVariable("GITHUB_OUTPUT") is { } output)
+            File.AppendAllText(output, $"{name}={value}{Environment.NewLine}");
     }
 }

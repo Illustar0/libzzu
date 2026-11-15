@@ -84,13 +84,14 @@ jobs:
         run: Add-Content -Path $env:GITHUB_PATH -Value 'C:\mingw32\bin'
 
       - name: Build and package
+        id: package
         run: dotnet run --project build --no-restore -- Package --platform "${{ matrix.target }}"
 
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          name: libzzu-${{ matrix.target }}
-          path: dist/*.tar.gz*
+          name: ${{ steps.package.outputs.archive }}
+          path: dist/${{ steps.package.outputs.archive }}.tar.gz*
           if-no-files-found: error
           compression-level: 0
 
@@ -131,11 +132,12 @@ jobs:
           merge-multiple: true
 
       - name: Assemble XCFramework
+        id: xcframework
         run: dotnet run --project build --no-restore -- Xcframework
 
       - uses: actions/upload-artifact@v7
         with:
-          name: libzzu-ios-xcframework
-          path: dist/libzzu-*-ios.tar.gz*
+          name: ${{ steps.xcframework.outputs.archive }}
+          path: dist/${{ steps.xcframework.outputs.archive }}.tar.gz*
           if-no-files-found: error
           compression-level: 0
