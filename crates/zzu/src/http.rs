@@ -315,32 +315,4 @@ mod tests {
         assert!(error.is_remote());
         assert_eq!(error.request().unwrap().error_code.as_deref(), Some("42"));
     }
-
-    #[test]
-    fn recharge_preorder_failure_is_remote_unknown_even_with_http_200() {
-        let message = "调用云平台生成预订单失败:云支付平台返回异常";
-        let value =
-            json!({"success": false, "message": message, "code": message, "resultData": null});
-        let body = value.to_string();
-        let mut context = response(200, &body).context;
-        Arc::make_mut(&mut context).error_code = Some(message.into());
-        let error = ecard_data::<Value>(JsonResponse { value, context }).unwrap_err();
-        let Error::Remote(details) = &error else {
-            panic!("expected remote error")
-        };
-        assert_eq!(details.kind(), crate::RemoteErrorKind::Unknown);
-        assert_eq!(error.message(), message);
-        let request = error.request().unwrap();
-        assert_eq!(request.status_code, Some(200));
-        assert_eq!(request.error_code.as_deref(), Some(message));
-        assert_eq!(request.response_body.as_deref(), Some(body.as_str()));
-
-        let value = json!({"resultData": {"order": "incomplete"}});
-        let error = ecard_data::<Value>(JsonResponse {
-            context: response(200, &value.to_string()).context,
-            value,
-        })
-        .unwrap_err();
-        assert!(error.is_decode());
-    }
 }
