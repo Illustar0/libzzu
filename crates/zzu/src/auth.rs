@@ -24,7 +24,7 @@ const LIBRARY_URL: &str = "https://library.zzu.edu.cn/sso/login/3rd/22757";
 const LIBRARY_RESERVATION_URL: &str = "http://order.lib.zzu.edu.cn/v4/login/cas";
 const LEAVE_URL: &str = "https://jf.v.zzu.edu.cn/jksb/servlet/qjxtcas?returnUrl=https%3A%2F%2Fjf.v.zzu.edu.cn%2Fleave%2Finforhome.jsp";
 
-/// 支持通过统一身份认证会话获取单点登录跳转地址的业务系统。
+/// 可通过统一身份认证获取单点登录跳转地址的业务系统。
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -45,7 +45,7 @@ pub enum Service {
     UndergradEas(UndergradEasService),
 }
 
-/// 本科教务系统（EAMS）支持直接携带令牌跳转的前端子应用。
+/// 本科教务系统（EAMS）支持携带令牌直接跳转的前端子应用。
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -99,12 +99,12 @@ impl UndergradEasService {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tokens {
-    /// 用于访问各业务系统的用户 JWT（有效期约 1 个月，兼容服务端的 `idToken` 字段名）。
+    /// 访问各业务系统的用户 JWT（有效期约 1 个月；反序列化时兼容 `idToken` 字段名）。
     #[serde(alias = "idToken")]
     pub user_token: String,
-    /// 服务端随登录一并签发的长效刷新 JWT（有效期约 2 个月）。
+    /// 登录时一并签发的长效刷新 JWT（有效期约 2 个月）。
     ///
-    /// 本库仅在预置或复用令牌时校验其未过期，并原样保留供外部持久化，不会调用刷新接口自动续期。
+    /// 本库仅在预置或复用令牌时校验其尚未过期，并原样保留供外部持久化，不会调用刷新接口自动续期。
     pub refresh_token: String,
 }
 
@@ -133,11 +133,11 @@ impl Tokens {
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MfaStatus {
-    /// 当前设备与账号登录是否必须完成多因素认证。
+    /// 当前设备与账号登录是否需要多因素认证。
     pub is_required: bool,
-    /// 当前账号是否支持通过安全手机短信验证码完成认证。
+    /// 当前账号是否支持安全手机短信验证。
     pub can_use_sms: bool,
-    /// 当前多因素认证流程是否已校验通过。
+    /// 当前多因素认证是否已校验通过。
     pub is_verified: bool,
 }
 
@@ -176,18 +176,18 @@ pub struct CasClient {
 impl CasClient {
     /// 使用账号、密码与默认 HTTP 配置创建统一身份认证客户端。
     ///
-    /// 本函数仅初始化本地状态，不发起网络请求；实际认证须调用 [`Self::login`]。
+    /// 仅初始化本地状态，不发起网络请求；实际认证须调用 [`Self::login`]。
     ///
     /// # Errors
     ///
-    /// 当底层 TLS 或默认 HTTP 客户端初始化失败时返回错误。
+    /// 底层 TLS 或默认 HTTP 客户端初始化失败时返回错误。
     pub fn new(account: impl Into<String>, password: impl Into<String>) -> Result<Self> {
         Ok(Self::with_http_client(account, password, http::client()?))
     }
 
     /// 使用自定义 [`reqwest::Client`] 创建统一身份认证客户端。
     ///
-    /// 传入的 `client` 必须禁用自动重定向（例如由 [`crate::http_client_builder`] 构建），以便 [`Self::service_login_url`] 直接读取单点登录重定向响应中的 `Location` 头。
+    /// `client` 必须禁用自动重定向（如通过 [`crate::http_client_builder`] 构建），以便 [`Self::service_login_url`] 直接读取单点登录响应的 `Location` 头。
     pub fn with_http_client(
         account: impl Into<String>,
         password: impl Into<String>,
@@ -209,13 +209,13 @@ impl CasClient {
         }
     }
 
-    /// 预置外部持久化的认证令牌对，并重置当前会话的登录与 MFA 状态。
+    /// 预置外部持久化的认证令牌对，并重置会话的登录与 MFA 状态。
     ///
-    /// 设置令牌后仍需调用 [`Self::login`] 激活会话；若预置令牌尚在可复用有效期内，[`Self::login`] 将直接复用而不发起密码登录请求。
+    /// 预置后仍须调用 [`Self::login`] 激活会话；若令牌尚在可复用有效期内，[`Self::login`] 会直接复用，不发起密码登录请求。
     ///
     /// # Errors
     ///
-    /// 当 `user_token` 或 `refresh_token` 不是结构合法的 JWT，或者任一令牌已过期时，返回 [`Error::InvalidInput`]。
+    /// `user_token` 或 `refresh_token` 不是合法的 JWT，或任一令牌已过期时，返回 [`Error::InvalidInput`]。
     pub async fn set_tokens(&self, tokens: Tokens) -> Result<()> {
         tokens
             .validate()
@@ -227,7 +227,7 @@ impl CasClient {
         Ok(())
     }
 
-    /// 返回当前会话缓存的令牌对副本；若尚未设置或尚未登录则返回 `None`。
+    /// 返回当前会话缓存的令牌对副本；未设置且未登录时返回 `None`。
     pub async fn tokens(&self) -> Option<Tokens> {
         self.inner.session.lock().await.tokens.clone()
     }
@@ -237,11 +237,11 @@ impl CasClient {
         self.inner.session.lock().await.is_logged_in
     }
 
-    /// 设置登录与 MFA 检测时上报的设备标识符（默认为 `"libzzu"`），并清空未完成的 MFA 状态。
+    /// 设置登录与 MFA 检测时上报的设备标识（默认 `"libzzu"`），并清空未完成的 MFA 状态。
     ///
     /// # Errors
     ///
-    /// 当 `device_id` 为空字符串时返回 [`Error::InvalidInput`]。
+    /// `device_id` 为空字符串时返回 [`Error::InvalidInput`]。
     pub async fn set_device(&self, device_id: impl Into<String>) -> Result<()> {
         let device_id = device_id.into();
         if device_id.is_empty() {
@@ -260,19 +260,19 @@ impl CasClient {
     ///
     /// # Errors
     ///
-    /// - 当服务端要求多因素认证且当前尚未通过校验时，返回 [`AuthenticationErrorKind::MfaRequired`]；调用方应依次调用 [`Self::send_sms`]、[`Self::verify_sms`] 后再次调用 [`Self::login`]。
-    /// - 当账号或密码错误时，返回 [`AuthenticationErrorKind::InvalidCredentials`]。
-    /// - 当网络传输异常、公钥或响应解析失败、RSA 加密失败或服务端签发的令牌已过期时，返回相应错误。
+    /// - 服务端要求多因素认证且尚未通过校验时，返回 [`AuthenticationErrorKind::MfaRequired`]；调用方须依次调用 [`Self::send_sms`]、[`Self::verify_sms`]，再重新调用 [`Self::login`]。
+    /// - 账号或密码错误时，返回 [`AuthenticationErrorKind::InvalidCredentials`]。
+    /// - 网络传输失败、公钥或响应解析失败、RSA 加密失败，或服务端签发的令牌已过期时返回错误。
     pub async fn login(&self) -> Result<()> {
         let mut session = self.inner.session.lock().await;
         self.login_session(&mut session).await
     }
 
-    /// 丢弃所有已缓存的令牌与 MFA 状态，强制重新执行完整密码认证流程。
+    /// 丢弃已缓存的令牌与 MFA 状态，强制重新用密码登录。
     ///
     /// # Errors
     ///
-    /// 错误条件与 [`Self::login`] 相同。
+    /// 错误条件同 [`Self::login`]。
     pub async fn reauthenticate(&self) -> Result<()> {
         let mut session = self.inner.session.lock().await;
         session.tokens = None;
@@ -280,14 +280,14 @@ impl CasClient {
         self.login_session(&mut session).await
     }
 
-    /// 获取当前已登录会话的可用 `user_token`。
+    /// 获取已登录会话的可用 `user_token`。
     ///
-    /// 本方法不发起网络请求，也不会使用密码重新登录：密码重登可能影响手机端 App 的在线状态，须由调用方显式通过 [`Self::login`] 触发。
+    /// 本方法不发起网络请求，也不会用密码重新登录：密码重登可能挤掉手机端 App 的在线状态，须由调用方显式调用 [`Self::login`] 触发。
     ///
     /// # Errors
     ///
-    /// - 当会话尚未调用 [`Self::login`] 登录或已调用 [`Self::logout`] 登出时，返回 [`AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 当 `user_token` 剩余有效期不足 15 分钟或 `refresh_token` 已过期时，返回 [`AuthenticationErrorKind::TokenExpired`]。
+    /// - 尚未调用 [`Self::login`] 登录或已调用 [`Self::logout`] 登出时，返回 [`AuthenticationErrorKind::NotAuthenticated`]。
+    /// - `user_token` 剩余有效期不足 15 分钟或 `refresh_token` 已过期时，返回 [`AuthenticationErrorKind::TokenExpired`]。
     pub async fn user_token(&self) -> Result<String> {
         let session = self.inner.session.lock().await;
         if !session.is_logged_in {
@@ -368,11 +368,11 @@ impl CasClient {
             .ok_or_else(|| Error::crypto("认证公钥不存在".into()))
     }
 
-    /// 向服务端探测当前账号与设备是否需要多因素认证，并更新内部 MFA 会话状态。
+    /// 向服务端探测当前账号与设备是否需要多因素认证，并更新内部 MFA 状态。
     ///
     /// # Errors
     ///
-    /// 当获取公钥、RSA 加密、网络请求失败，或者服务端返回的 MFA 状态字段缺失或异常时返回错误。
+    /// 获取公钥、RSA 加密、网络请求失败，或服务端返回的 MFA 状态字段缺失时返回错误。
     pub async fn detect_mfa(&self) -> Result<MfaStatus> {
         let mut session = self.inner.session.lock().await;
         self.detect_mfa_session(&mut session).await?;
@@ -426,14 +426,14 @@ impl CasClient {
         Ok(())
     }
 
-    /// 初始化安全手机短信认证流程，并请求服务端向绑定手机发送验证码。
+    /// 初始化短信 MFA 并请求服务端向绑定手机发送验证码。
     ///
-    /// 若此前尚未执行过 MFA 检测，会自动先探测一次。
+    /// 若尚未探测 MFA 状态，会先自动探测。
     ///
     /// # Errors
     ///
-    /// - 当会话无需 MFA 或不支持短信验证时返回 [`AuthenticationErrorKind::InvalidMfaState`]。
-    /// - 当 MFA 初始化或短信发送请求在网络层、认证层或响应解码阶段失败时返回相应错误。
+    /// - 会话无需 MFA 或不支持短信验证时，返回 [`AuthenticationErrorKind::InvalidMfaState`]。
+    /// - MFA 初始化或短信发送请求失败时返回错误。
     pub async fn send_sms(&self) -> Result<()> {
         let mut session = self.inner.session.lock().await;
         if session.mfa.state.is_empty() {
@@ -491,16 +491,16 @@ impl CasClient {
         Ok(())
     }
 
-    /// 提交用户收到的短信验证码以完成多因素认证校验。
+    /// 校验短信验证码以完成多因素认证。
     ///
-    /// 校验成功后需再次调用 [`Self::login`] 完成最终令牌签发。
+    /// 校验通过后须再次调用 [`Self::login`] 完成令牌签发。
     ///
     /// # Errors
     ///
-    /// - 当 `code` 为空字符串时返回 [`Error::InvalidInput`]。
-    /// - 当尚未调用 [`Self::send_sms`] 初始化短信会话时返回 [`AuthenticationErrorKind::InvalidMfaState`]。
-    /// - 当验证码不匹配或校验未通过时返回 [`AuthenticationErrorKind::MfaVerificationFailed`]。
-    /// - 当网络传输失败或响应格式无法解析时返回相应错误。
+    /// - `code` 为空字符串时返回 [`Error::InvalidInput`]。
+    /// - 尚未调用 [`Self::send_sms`] 初始化短信会话时，返回 [`AuthenticationErrorKind::InvalidMfaState`]。
+    /// - 验证码不匹配或校验未通过时，返回 [`AuthenticationErrorKind::MfaVerificationFailed`]。
+    /// - 网络传输失败或响应解析失败时返回错误。
     pub async fn verify_sms(&self, code: &str) -> Result<()> {
         #[derive(Deserialize)]
         struct Verification {
@@ -543,12 +543,12 @@ impl CasClient {
         Ok(())
     }
 
-    /// 查询当前已登录用户的个人身份属性与门户概览卡片数据。
+    /// 查询当前用户的个人身份属性与门户概览卡片数据。
     ///
     /// # Errors
     ///
-    /// - 当客户端尚未登录或令牌不可用时返回 [`Error::Authentication`]。
-    /// - 当门户接口网络传输失败、返回非成功状态，或个人信息卡片结构不符合预期时返回相应错误。
+    /// - 客户端尚未登录或令牌不可用时返回 [`Error::Authentication`]。
+    /// - 门户接口请求失败或个人信息卡片结构不符时返回错误。
     pub async fn user_info(&self) -> Result<PersonalInfo> {
         #[derive(Deserialize)]
         struct User {
@@ -596,18 +596,18 @@ impl CasClient {
         })
     }
 
-    /// 获取当前已登录账号访问指定业务系统 `service` 的单点登录跳转 URL。
+    /// 获取当前账号访问指定业务系统 `service` 的单点登录跳转 URL。
     ///
-    /// - 对于 [`Service::PresidentMailbox`]、[`Service::Ecard`] 与 [`Service::UndergradEas`]，直接使用当前会话的 `user_token` 在本地拼接携带令牌参数（`token=...` 或 `idToken=...`）的目标地址，不发起网络请求。
-    /// - 对于其余服务，使用 `user_token` 请求对应门户入口或 CAS 服务票据签发接口，不跟随重定向，直接提取并返回响应头中的 `Location` 跳转地址。
+    /// - [`Service::PresidentMailbox`]、[`Service::Ecard`] 与 [`Service::UndergradEas`]：直接在本地用 `user_token` 拼接携带令牌参数（`token=...` 或 `idToken=...`）的目标地址，不发起网络请求。
+    /// - 其余服务：携带 `user_token` 请求对应门户入口或 CAS 票据签发接口，不跟随重定向，直接提取响应头中的 `Location` 跳转地址。
     ///
-    /// 返回的 URL 携带单点登录票据或用户令牌，切勿直接写入日志。
+    /// 返回的 URL 含单点登录票据或用户令牌，切勿写入日志。
     ///
     /// # Errors
     ///
-    /// - 当会话尚未登录或令牌不可用时，返回 [`Error::Authentication`]（细分为 [`AuthenticationErrorKind::NotAuthenticated`] 或 [`AuthenticationErrorKind::TokenExpired`]）。
-    /// - 当需要向服务端申请跳转票据且网络传输失败或返回非 2xx/3xx HTTP 状态码时，返回 [`Error::Transport`] 或 [`Error::Http`]。
-    /// - 当重定向响应缺少有效的非空 `Location` 头或目标 URL 构造失败时，返回 [`Error::Decode`]。
+    /// - 会话尚未登录或令牌不可用时，返回 [`Error::Authentication`]（细分为 [`AuthenticationErrorKind::NotAuthenticated`] 或 [`AuthenticationErrorKind::TokenExpired`]）。
+    /// - 申请跳转票据时网络传输失败或返回非 2xx/3xx 状态码，返回 [`Error::Transport`] 或 [`Error::Http`]。
+    /// - 重定向响应缺少非空 `Location` 头或目标 URL 构造失败时，返回 [`Error::Decode`]。
     pub async fn service_login_url(&self, service: Service) -> Result<String> {
         match service {
             Service::Email => self.email_login_url().await,
@@ -684,8 +684,8 @@ impl CasClient {
     /// 清除本地缓存的令牌、MFA 状态与登录标记。
     ///
     /// 所有共享同一会话的 [`CasClient`] 实例会立即变为未登录状态。
-    /// 共享该会话的 [`crate::eas::UndergradEasClient`] 与 [`crate::ecard::EcardClient`] 仍保留各自的本地缓存
-    /// （如 `is_logged_in()`、`current_semester()`），直至下次执行需读取 [`Self::user_token`] 的操作时返回未认证错误。
+    /// 派生的 [`crate::eas::UndergradEasClient`] 与 [`crate::ecard::EcardClient`] 仍保留各自的本地缓存
+    /// （如 `is_logged_in()`、`current_semester()`），但下次读取 [`Self::user_token`] 时会返回未认证错误。
     pub async fn logout(&self) {
         let mut session = self.inner.session.lock().await;
         session.tokens = None;

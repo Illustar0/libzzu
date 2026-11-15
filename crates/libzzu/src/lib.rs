@@ -37,7 +37,7 @@ pub extern "C" fn zzu_abi_version() -> u32 {
     (ZZU_ABI_VERSION_MAJOR << 16) | ZZU_ABI_VERSION_MINOR
 }
 
-/// 返回链接库的软件版本号，为静态存储的 NUL 结尾字符串，不得释放。
+/// 返回链接库的软件版本号，为静态存储的 `NUL` 结尾字符串，不得释放。
 // SAFETY: The symbol belongs to this library's zzu_ namespace.
 #[unsafe(no_mangle)]
 pub extern "C" fn zzu_version() -> *const c_char {

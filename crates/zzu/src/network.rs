@@ -23,7 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Error, Result, http, http::TrustRoots};
 
-/// 自动探测得到的校园网 Portal 门户地址与客户端 IP 信息。
+/// 自动探测得到的校园网 Portal 地址与客户端 IP 信息。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalInfo {
@@ -35,19 +35,19 @@ pub struct PortalInfo {
     pub user_ip: IpAddr,
 }
 
-/// 通过明文 HTTP 探测请求自动发现当前网络环境下的校园网 Portal 门户参数。
+/// 发起明文 HTTP 探测，自动发现当前网络下的校园网 Portal 参数。
 ///
 /// 探测请求只连接 IPv4 地址，避免经其他网口的 IPv6 路由发出而探测到错误的终端地址。
 ///
 /// # Errors
 ///
-/// - 当探测请求已被重定向至 `https://www.bilibili.com`（通常代表当前网络已连通互联网、未处于强制门户拦截状态）时，返回 [`Error::Remote`]。
-/// - 当网络传输失败、HTML 跳转链接缺失，或重定向 URL 中缺少合法的客户端 IP 参数时返回相应错误。
+/// - 探测请求已重定向至 `https://www.bilibili.com`（即当前网络已连通外网、未被门户拦截）时，返回 [`Error::Remote`]。
+/// - 网络传输失败、HTML 跳转链接缺失，或重定向 URL 缺少合法的客户端 IP 参数时返回错误。
 pub async fn discover_portal_info() -> Result<PortalInfo> {
     discover_portal_info_with_trust_roots(&TrustRoots::default()).await
 }
 
-/// 探测校园网 Portal 门户参数，校验证书时信任 `roots`，其余同 [`discover_portal_info`]。
+/// 探测校园网 Portal 参数，校验证书时信任 `roots`，其余同 [`discover_portal_info`]。
 ///
 /// # Errors
 ///
@@ -102,7 +102,7 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
 
 /// 只解析出 IPv4 地址的 DNS 解析器。
 ///
-/// eportal 按 IPv4 地址识别终端。若允许 happy eyeballs 优先连接 IPv6，请求可能经持有 IPv6 默认路由的
+/// `eportal` 按 IPv4 地址识别终端。若允许 happy eyeballs 优先连接 IPv6，请求可能经持有 IPv6 默认路由的
 /// 其他网口发出，门户看到的就不是待认证的校园网地址。
 struct Ipv4OnlyResolver;
 
@@ -189,7 +189,7 @@ pub enum PortalEncryption {
     Xor,
 }
 
-/// Portal 登录接口返回的 `JSONP` 认证结果。
+/// Portal 登录接口返回的 JSONP 认证结果。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AuthResult {
     /// 服务端结果码（`1` 表示认证成功）。
@@ -238,7 +238,7 @@ impl PortalClient {
     ///
     /// # Errors
     ///
-    /// 当 `base_url` 不是含主机名的有效 `http`/`https` URL，或底层 HTTP 客户端初始化失败时返回错误。
+    /// `base_url` 不是含主机名的有效 `http`/`https` URL，或底层 HTTP 客户端初始化失败时返回错误。
     pub fn new(
         base_url: &str,
         user_ip: IpAddr,
@@ -251,7 +251,7 @@ impl PortalClient {
     ///
     /// # Errors
     ///
-    /// 当 `base_url` 不是含主机名的有效 `http`/`https` URL，或底层 HTTP 客户端初始化失败时返回错误。
+    /// `base_url` 不是含主机名的有效 `http`/`https` URL，或底层 HTTP 客户端初始化失败时返回错误。
     pub fn with_trust_roots(
         base_url: &str,
         user_ip: IpAddr,
@@ -275,7 +275,7 @@ impl PortalClient {
     ///
     /// # Errors
     ///
-    /// 当 `base_url` 不是包含主机名的有效 `http`/`https` URL 时返回 [`Error::InvalidInput`]。
+    /// `base_url` 不是含主机名的有效 `http`/`https` URL 时返回 [`Error::InvalidInput`]。
     pub fn with_http_client(base_url: &str, user_ip: IpAddr, client: Client) -> Result<Self> {
         Ok(Self {
             http: client,
@@ -286,12 +286,12 @@ impl PortalClient {
 
     /// 向校园网 Portal 服务器发起终端上线认证请求。
     ///
-    /// 融合宽带用户需在 `account` 后自行附带对应的运营商后缀（例如中国移动 `@cmcc`、中国联通 `@unicom`、中国电信 `@telecom`）；普通校园网账号直接传入学号或工号即可。
+    /// 融合宽带用户需在 `account` 后自行附带对应的运营商后缀（如中国移动 `@cmcc`、中国联通 `@unicom`、中国电信 `@telecom`）；普通校园网账号直接传入学号或工号即可。
     ///
     /// # Errors
     ///
-    /// - 当选择 [`PortalEncryption::Xor`] 且待编码字段超过 512 个字符时返回 [`Error::InvalidInput`]。
-    /// - 当选择 [`PortalSourceAddress::UserIp`] 而 `user_ip` 无法绑定、网络传输失败、HTTP 状态非成功或返回的 `JSONP` 报文无法解析时返回相应错误。
+    /// - 选择 [`PortalEncryption::Xor`] 且待编码字段超过 512 个字符时返回 [`Error::InvalidInput`]。
+    /// - 选择 [`PortalSourceAddress::UserIp`] 而 `user_ip` 无法绑定、网络传输失败、HTTP 状态非成功或返回的 JSONP 报文无法解析时返回错误。
     pub async fn login(
         &self,
         account: &str,
@@ -387,11 +387,11 @@ fn parse_jsonp<T: serde::de::DeserializeOwned>(text: &str) -> Result<T> {
     Ok(serde_json::from_str(json)?)
 }
 
-/// 通过 UDP 路由表查询本机前往目标地址 `target` 时选用的本地网卡 IP 地址（不实际发送网络数据包）。
+/// 通过 UDP 路由表查询本机前往 `target` 时选用的本地网卡 IP 地址（不实际发送数据包）。
 ///
 /// # Errors
 ///
-/// 当绑定本地 UDP 套接字、查询到 `target` 的路由或读取本地套接字地址失败时返回 [`std::io::Error`]。
+/// 绑定本地 UDP 套接字、查询前往 `target` 的路由或读取本地套接字地址失败时返回 [`std::io::Error`]。
 pub fn local_ip(target: IpAddr) -> std::io::Result<IpAddr> {
     let bind = match target {
         IpAddr::V4(_) => "0.0.0.0:0",
@@ -418,7 +418,7 @@ pub struct OnlineDevice {
     pub host_name: String,
     /// 终端分配的内网 IP 地址文本。
     pub ip: String,
-    /// 终端上线登录时间（`Asia/Shanghai` 时区）。
+    /// 终端登录时间（`Asia/Shanghai` 时区）。
     #[serde(deserialize_with = "deserialize_login_time")]
     pub login_time: Zoned,
     /// 终端 MAC 地址文本。
@@ -429,7 +429,7 @@ pub struct OnlineDevice {
     pub terminal_type: String,
     /// 已使用上行流量文本。
     pub up_flow: String,
-    /// 已在线持续时长（单位：秒）。
+    /// 在线时长（单位：秒）。
     #[serde(deserialize_with = "deserialize_use_time")]
     pub use_time: u64,
     /// 校园网账户数字用户 ID。
@@ -482,7 +482,7 @@ impl SelfServiceClient {
     ///
     /// # Errors
     ///
-    /// 当 `base_url` 不是有效的 `http`/`https` URL 或 HTTP 客户端构建失败时返回错误。
+    /// `base_url` 不是有效的 `http`/`https` URL 或 HTTP 客户端构建失败时返回错误。
     pub fn new(base_url: &str) -> Result<Self> {
         Self::with_trust_roots(base_url, &TrustRoots::default())
     }
@@ -491,7 +491,7 @@ impl SelfServiceClient {
     ///
     /// # Errors
     ///
-    /// 当 `base_url` 不是有效的 `http`/`https` URL 或 HTTP 客户端构建失败时返回错误。
+    /// `base_url` 不是有效的 `http`/`https` URL 或 HTTP 客户端构建失败时返回错误。
     pub fn with_trust_roots(base_url: &str, roots: &TrustRoots) -> Result<Self> {
         let cookies = Arc::new(Jar::default());
         let http = roots
@@ -528,7 +528,7 @@ impl SelfServiceClient {
     ///
     /// # Errors
     ///
-    /// - 当登录页缺少 `checkcode` 表单字段、网络异常或提交后未跳转至控制台页面（如账号密码错误）时返回相应错误。
+    /// 登录页缺少 `checkcode` 表单字段、网络异常，或提交后未跳转至控制台页面（如账号密码错误）时返回错误。
     pub async fn login(&mut self, account: &str, password: &str) -> Result<()> {
         #[derive(Serialize)]
         struct Login<'a> {
@@ -574,8 +574,8 @@ impl SelfServiceClient {
     ///
     /// # Errors
     ///
-    /// - 当尚未调用 [`Self::login`] 登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 当网络请求失败或设备列表 JSON 解析失败时返回相应错误。
+    /// - 尚未调用 [`Self::login`] 登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
+    /// - 网络请求失败或设备列表 JSON 解析失败时返回错误。
     pub async fn online_devices(&self) -> Result<Vec<OnlineDevice>> {
         #[derive(Serialize)]
         struct Query {
@@ -605,9 +605,9 @@ impl SelfServiceClient {
     ///
     /// # Errors
     ///
-    /// - 当尚未调用 [`Self::login`] 登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 当 `session_id` 为空字符串时返回 [`Error::InvalidInput`]。
-    /// - 当下线请求在网络层或 HTTP 状态校验阶段失败时返回相应错误。
+    /// - 尚未调用 [`Self::login`] 登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
+    /// - `session_id` 为空字符串时返回 [`Error::InvalidInput`]。
+    /// - 下线请求失败时返回错误。
     pub async fn kick_device(&self, session_id: &str) -> Result<()> {
         #[derive(Serialize)]
         struct Query<'a> {
@@ -636,8 +636,8 @@ impl SelfServiceClient {
     ///
     /// # Errors
     ///
-    /// - 当客户端尚未登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 当服务端登出请求失败时返回相应错误（本地登录标记仍会被清除）。
+    /// - 客户端尚未登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
+    /// - 服务端登出请求失败时返回错误（本地登录标记仍会被清除）。
     pub async fn logout(&mut self) -> Result<()> {
         if !self.is_logged_in {
             return Err(Error::not_authenticated());

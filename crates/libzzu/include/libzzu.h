@@ -18,7 +18,7 @@
 #define ZZU_ABI_VERSION_MINOR 0
 
 /**
- * 本库分配的字节缓冲区不透明句柄，内容为 UTF-8 JSON（不含结尾 NUL），须通过 `zzu_buffer_free` 释放。
+ * 本库分配的字节缓冲区不透明句柄，内容为 UTF-8 JSON（不含结尾 `NUL`），须通过 `zzu_buffer_free` 释放。
  */
 typedef struct ZzuBuffer ZzuBuffer;
 
@@ -69,7 +69,7 @@ typedef int32_t ZzuStatus;
  *
  * 回调运行在后台工作线程上，须尽快返回；`status` 为 `ZZU_OK` 时 `payload` 为结果 JSON，
  * 否则为错误 JSON。`payload` 恒非空，其所有权移交给回调方，须通过 `zzu_buffer_free` 释放，
- * 可以跨线程保存到回调返回之后。
+ * 可传往其他线程并在回调返回后继续使用。
  */
 typedef void (*ZzuCallback)(void *user_data, ZzuStatus status, struct ZzuBuffer *payload);
 
@@ -160,12 +160,12 @@ extern "C" {
 uint32_t zzu_abi_version(void);
 
 /**
- * 返回链接库的软件版本号，为静态存储的 NUL 结尾字符串，不得释放。
+ * 返回链接库的软件版本号，为静态存储的 `NUL` 结尾字符串，不得释放。
  */
 const char *zzu_version(void);
 
 /**
- * 返回缓冲区首字节地址（`buffer` 为 `NULL` 时返回 `NULL`），不保证以 NUL 结尾。
+ * 返回缓冲区首字节地址（`buffer` 为 `NULL` 时返回 `NULL`），不保证以 `NUL` 结尾。
  *
  * 返回的指针在调用 `zzu_buffer_free` 前有效；长度须通过 `zzu_buffer_len` 获取。
  *
@@ -246,15 +246,15 @@ void zzu_cas_free(struct ZzuCasClient *cas);
 /**
  * 异步调用 CAS 客户端方法；立即返回，绝不在当前调用栈内同步触发回调。
  *
- * 返回 `ZZU_OK` 时 `callback` 必定在后台工作线程上恰好触发一次（可能早于本函数返回，但 `*out_call` 保证已在触发前写入）；
+ * 返回 `ZZU_OK` 时 `callback` 必定在后台工作线程上恰好触发一次；触发可能早于本函数返回，但保证在写入 `*out_call` 之后。
  * 返回非零状态码时回调绝不触发。同步返回值仅校验句柄、方法名、回调与输入切片指针；`params` JSON 解析及后续执行错误一律经回调上报。
  *
- * `method` 为 NUL 结尾的方法名（如 `"login"`）；`params` 为 UTF-8 JSON 对象，`params_len` 为 `0` 表示无参数（此时 `params` 可传 `NULL`）。
+ * `method` 为 `NUL` 结尾的方法名（如 `"login"`）；`params` 为 UTF-8 JSON 对象，`params_len` 为 `0` 表示无参数（此时 `params` 可传 `NULL`）。
  *
  * # Safety
  *
  * - `cas` 必须为 `NULL` 或指向尚未释放的有效句柄。
- * - `method` 必须为 `NULL` 或调用期间可读的 NUL 结尾字符串。
+ * - `method` 必须为 `NULL` 或调用期间可读的 `NUL` 结尾字符串。
  * - `params` 在 `params_len` 非零时必须指向调用期间可读的 `params_len` 字节；本函数返回后不再访问。
  * - `user_data` 由本库原样传回，必须可在任意线程使用，且在回调触发前保持有效。
  * - `out_call` 可以为 `NULL`（无需取消时）；若非空则必须对齐且独占可写，写入的句柄须通过 `zzu_call_free` 释放。
@@ -287,7 +287,7 @@ ZzuStatus zzu_cas_call_blocking(const struct ZzuCasClient *cas,
                                 struct ZzuBuffer **out_payload);
 
 /**
- * 将学期课表渲染为 `iCalendar`（`.ics`）日历文本（当前线程同步完成，不发起网络请求，无需客户端）。
+ * 将学期课表渲染为 `iCalendar`（`.ics`）文本（当前线程同步完成，不发起网络请求，无需客户端）。
  *
  * `weeks` 为 `teaching_weeks` 返回的 UTF-8 JSON 数组；仅导出一周时传入包含 `teaching_week` 结果的单元素数组。
  * 返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的 `.ics` 文本，否则为错误 JSON。
@@ -302,7 +302,7 @@ ZzuStatus zzu_timetable_to_calendar(const uint8_t *weeks,
                                     struct ZzuBuffer **out_payload);
 
 /**
- * 基于 `ZzuCasClient` 创建本科教务客户端（本地完成，不发起网络请求）。
+ * 使用 `ZzuCasClient` 创建本科教务客户端（本地完成，不发起网络请求）。
  *
  * 新句柄与 `cas` 共享认证会话、运行时和时限；创建后释放 `cas` 不影响它。
  *
@@ -358,7 +358,7 @@ ZzuStatus zzu_eas_call_blocking(const struct ZzuEasClient *eas,
 /**
  * 校验宿舍房间号（格式为 `area-building--level-room`；当前线程同步完成，不发起网络请求，无需客户端）。
  *
- * `room` 为 UTF-8 房间号文本（无需 NUL 结尾）。返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的规范房间号，否则为错误 JSON。
+ * `room` 为 UTF-8 房间号文本（无需 `NUL` 结尾）。返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的规范房间号，否则为错误 JSON。
  *
  * # Safety
  *
@@ -385,7 +385,7 @@ ZzuStatus zzu_recharge_order_checkout_url_for(const uint8_t *params,
                                               struct ZzuBuffer **out_payload);
 
 /**
- * 基于 `ZzuCasClient` 创建校园卡与电控客户端（本地完成，不发起网络请求）。
+ * 使用 `ZzuCasClient` 创建校园卡与电控客户端（本地完成，不发起网络请求）。
  *
  * 新句柄与 `cas` 共享认证会话、运行时和时限；创建后释放 `cas` 不影响它。
  *

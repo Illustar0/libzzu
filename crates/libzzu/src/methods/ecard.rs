@@ -278,7 +278,7 @@ impl Service for Guarded<EcardClient> {
 
 /// 校验宿舍房间号（格式为 `area-building--level-room`；当前线程同步完成，不发起网络请求，无需客户端）。
 ///
-/// `room` 为 UTF-8 房间号文本（无需 NUL 结尾）。返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的规范房间号，否则为错误 JSON。
+/// `room` 为 UTF-8 房间号文本（无需 `NUL` 结尾）。返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的规范房间号，否则为错误 JSON。
 ///
 /// # Safety
 ///
@@ -326,7 +326,7 @@ pub unsafe extern "C" fn zzu_recharge_order_checkout_url_for(
     }
 }
 
-/// 基于 `ZzuCasClient` 创建校园卡与电控客户端（本地完成，不发起网络请求）。
+/// 使用 `ZzuCasClient` 创建校园卡与电控客户端（本地完成，不发起网络请求）。
 ///
 /// 新句柄与 `cas` 共享认证会话、运行时和时限；创建后释放 `cas` 不影响它。
 ///

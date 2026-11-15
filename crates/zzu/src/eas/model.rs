@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::{Error, Result};
 
-/// 具有中英文名称与编码的通用教务实体（如校区、教学楼）。
+/// 带中英文名称与编码的通用教务实体（如校区、教学楼）。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NamedEntity {
@@ -161,7 +161,7 @@ pub struct Schedule {
     pub end_unit: u8,
     /// 排课状态文本（如 `"已结束"`；实验课为 `None`）。
     pub state: Option<String>,
-    /// 所属教学周序号（从 `1` 开始）。
+    /// 所属教学周序号（从 1 开始）。
     pub week_index: u32,
     /// 授课类型标识（如 `"THEORY"`；实验课为 `None`）。
     pub lesson_type: Option<String>,
@@ -274,7 +274,7 @@ fn parse_time(date: Date, value: &Value) -> Result<Zoned> {
         .map_err(Error::decode)
 }
 
-/// 绑定了课程元数据与单次排课详情的课表项。
+/// 课表项，包含课程元数据与单次排课详情。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Lesson {
     /// 课程元数据。
@@ -287,15 +287,15 @@ pub struct Lesson {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TeachingWeek {
-    /// 教学周序号（从 `1` 开始）。
+    /// 教学周序号（从 1 开始）。
     pub week_index: u32,
     lessons: Vec<Lesson>,
 }
 
 impl TeachingWeek {
-    /// 每周包含的天数（周一至周日，共 `7` 天）。
+    /// 每周包含的天数（周一至周日，共 7 天）。
     pub const DAYS: u8 = 7;
-    /// 每天包含的标准节次数（第 `1` 至第 `10` 节）。
+    /// 每天包含的标准节次数（第 1 至第 10 节）。
     pub const UNITS: u8 = 10;
 
     /// 返回本周内的所有排课记录切片。
@@ -315,17 +315,17 @@ impl TeachingWeek {
     ///
     /// # Errors
     ///
-    /// 当 `weekday` 不在 `1..=7` 或 `unit` 不在 `1..=10` 范围内时返回 [`Error::InvalidInput`]。
+    /// `weekday` 不在 `1..=7` 或 `unit` 不在 `1..=10` 范围内时返回 [`Error::InvalidInput`]。
     pub fn get(&self, weekday: u8, unit: u8) -> Result<Option<&Lesson>> {
         validate_index(weekday, unit)?;
         Ok(self.lesson_at(weekday, unit))
     }
 
-    /// 按第 `1` 至第 `10` 节的顺序返回指定星期（`1..=7`）全天的排课槽位。
+    /// 按第 1 至第 10 节的顺序返回指定星期（`1..=7`）全天的排课槽位。
     ///
     /// # Errors
     ///
-    /// 当 `weekday` 不在 `1..=7` 范围内时返回 [`Error::InvalidInput`]。
+    /// `weekday` 不在 `1..=7` 范围内时返回 [`Error::InvalidInput`]。
     pub fn day(&self, weekday: u8) -> Result<Vec<Option<&Lesson>>> {
         (1..=Self::UNITS)
             .map(|unit| self.get(weekday, unit))
@@ -336,7 +336,7 @@ impl TeachingWeek {
     ///
     /// # Errors
     ///
-    /// 当 `unit` 不在 `1..=10` 范围内时返回 [`Error::InvalidInput`]。
+    /// `unit` 不在 `1..=10` 范围内时返回 [`Error::InvalidInput`]。
     pub fn unit(&self, unit: u8) -> Result<Vec<Option<&Lesson>>> {
         (1..=Self::DAYS).map(|day| self.get(day, unit)).collect()
     }
@@ -353,7 +353,7 @@ impl TeachingWeek {
             .collect()
     }
 
-    /// 将本周所有排课导出为去重后的 `iCalendar`（[`Calendar`]）日历对象。
+    /// 将本周所有排课去重后导出为 [`Calendar`]（`iCalendar` 格式）。
     #[must_use]
     pub fn to_calendar(&self) -> Calendar {
         calendar(self.lessons.iter())
@@ -381,7 +381,7 @@ impl TeachingWeeks {
     ///
     /// # Errors
     ///
-    /// 当 `week_indices` 中包含 `0` 或存在重复的教学周序号时返回 [`Error::Decode`]。
+    /// `week_indices` 包含 `0` 或存在重复的教学周序号时返回 [`Error::Decode`]。
     pub fn from_courses(week_indices: &[u32], courses: Vec<CourseTableEntry>) -> Result<Self> {
         let mut positions = BTreeMap::new();
         let mut weeks = Vec::with_capacity(week_indices.len());
@@ -407,7 +407,7 @@ impl TeachingWeeks {
         Ok(Self(weeks))
     }
 
-    /// 将集合中全部教学周的排课导出为去重后的 `iCalendar`（[`Calendar`]）日历对象。
+    /// 将全部教学周的排课去重后导出为 [`Calendar`]（`iCalendar` 格式）。
     #[must_use]
     pub fn to_calendar(&self) -> Calendar {
         calendar(self.0.iter().flat_map(|week| &week.lessons))

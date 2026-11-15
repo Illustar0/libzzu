@@ -9,11 +9,11 @@ use serde_json::Value;
 
 use crate::{Error, RequestContext, Result};
 
-/// HTTP 客户端校验服务端证书时信任的根证书，默认交给平台校验器。
+/// HTTP 客户端校验服务端证书时信任的根证书，默认使用平台校验器。
 ///
-/// Android 上须用 [`Self::from_pem_bundle`] 提供系统根证书：`rustls-platform-verifier` 的
-/// Android 实现会在工作线程上同步下载并用 Java 解析吊销列表，遇到大体积 CRL 时一次握手就要
-/// 数十秒，工作线程都被占住后连超时也无法触发。
+/// Android 上须调用 [`Self::from_pem_bundle`] 提供系统根证书：`rustls-platform-verifier` 的
+/// Android 实现会在工作线程上同步下载并用 Java 解析吊销列表，遇到大体积 CRL 时单次握手耗时可达
+/// 数十秒，阻塞所有工作线程后连超时也无法触发。
 #[derive(Clone, Default)]
 pub struct TrustRoots {
     certificates: Option<Arc<[Certificate]>>,
@@ -24,7 +24,7 @@ impl TrustRoots {
     ///
     /// # Errors
     ///
-    /// 当 `pem` 无法解析或不含任何证书时返回错误。
+    /// `pem` 无法解析或不含任何证书时返回错误。
     pub fn from_pem_bundle(pem: &[u8]) -> Result<Self> {
         let certificates = Certificate::from_pem_bundle(pem)?;
         if certificates.is_empty() {
@@ -35,7 +35,7 @@ impl TrustRoots {
         })
     }
 
-    /// 创建只配置了证书校验的 HTTP 客户端构建器。
+    /// 创建仅配置证书校验的 HTTP 客户端构建器。
     pub fn tls_client_builder(&self) -> ClientBuilder {
         match &self.certificates {
             Some(certificates) => Client::builder().tls_certs_only(certificates.iter().cloned()),
@@ -43,7 +43,7 @@ impl TrustRoots {
         }
     }
 
-    /// 创建预设了校园服务协议约定的 HTTP 客户端构建器。
+    /// 创建按校园服务协议配置的 HTTP 客户端构建器。
     ///
     /// 默认启用 Cookie 存储，禁用自动重定向、自动重试与隐式超时，供协议层直接读取认证跳转头与原始状态码。
     pub fn client_builder(&self) -> ClientBuilder {
@@ -53,11 +53,11 @@ impl TrustRoots {
             .retry(reqwest::retry::never())
     }
 
-    /// 创建预设了校园服务协议约定的 HTTP 客户端。
+    /// 创建按校园服务协议配置的 HTTP 客户端。
     ///
     /// # Errors
     ///
-    /// 当 HTTP 客户端初始化失败时返回错误。
+    /// HTTP 客户端初始化失败时返回错误。
     pub fn client(&self) -> Result<Client> {
         Ok(self.client_builder().build()?)
     }
@@ -67,7 +67,7 @@ pub(crate) fn client() -> Result<Client> {
     TrustRoots::default().client()
 }
 
-/// 创建预设了校园服务协议约定、使用平台校验器的 HTTP 客户端构建器，见 [`TrustRoots::client_builder`]。
+/// 创建使用平台校验器并按校园服务协议配置的 HTTP 客户端构建器，详见 [`TrustRoots::client_builder`]。
 pub fn client_builder() -> ClientBuilder {
     TrustRoots::default().client_builder()
 }

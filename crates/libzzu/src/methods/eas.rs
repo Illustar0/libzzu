@@ -65,7 +65,7 @@ impl Service for Guarded<UndergradEasClient> {
     }
 }
 
-/// 将学期课表渲染为 `iCalendar`（`.ics`）日历文本（当前线程同步完成，不发起网络请求，无需客户端）。
+/// 将学期课表渲染为 `iCalendar`（`.ics`）文本（当前线程同步完成，不发起网络请求，无需客户端）。
 ///
 /// `weeks` 为 `teaching_weeks` 返回的 UTF-8 JSON 数组；仅导出一周时传入包含 `teaching_week` 结果的单元素数组。
 /// 返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的 `.ics` 文本，否则为错误 JSON。
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn zzu_timetable_to_calendar(
     }
 }
 
-/// 基于 `ZzuCasClient` 创建本科教务客户端（本地完成，不发起网络请求）。
+/// 使用 `ZzuCasClient` 创建本科教务客户端（本地完成，不发起网络请求）。
 ///
 /// 新句柄与 `cas` 共享认证会话、运行时和时限；创建后释放 `cas` 不影响它。
 ///

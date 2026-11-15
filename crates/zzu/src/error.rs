@@ -5,7 +5,7 @@ use serde::Serialize;
 /// 统一错误类型为 [`Error`] 的 `Result` 别名。
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// 失败 HTTP 请求关联的诊断上下文。
+/// HTTP 请求失败时的诊断上下文。
 ///
 /// 为避免泄露敏感凭据，`url` 已预先剥离查询参数、片段与用户信息；
 /// [`fmt::Debug`] 实现仅输出响应体字节长度，不打印完整正文。
@@ -100,7 +100,7 @@ pub enum AuthenticationErrorKind {
     Unknown,
 }
 
-/// 远端服务返回业务失败结果的细分类型。
+/// 远端服务业务错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -109,7 +109,7 @@ pub enum RemoteErrorKind {
     Unknown,
 }
 
-/// 目标资源不存在错误的细分类型。
+/// 资源不存在错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -139,12 +139,12 @@ pub type InvalidInputError = ErrorDetails<InvalidInputErrorKind>;
 pub type AuthenticationError = ErrorDetails<AuthenticationErrorKind>;
 /// 远端服务业务错误详情。
 pub type RemoteError = ErrorDetails<RemoteErrorKind>;
-/// 目标资源不存在错误详情。
+/// 资源不存在错误详情。
 pub type NotFoundError = ErrorDetails<NotFoundErrorKind>;
 /// 密码学处理错误详情。
 pub type CryptoError = ErrorDetails<CryptoErrorKind>;
 
-/// 携带细分类型、人类可读消息、可选请求上下文与底层错误源的通用错误载体。
+/// 通用错误详情，包含细分类型、错误消息、可选的请求上下文与底层错误源。
 #[derive(Debug)]
 pub struct ErrorDetails<K> {
     kind: K,
@@ -328,7 +328,7 @@ impl Error {
         matches!(self, Self::Remote(_))
     }
 
-    /// 判断是否为目标资源不存在错误（[`Self::NotFound`]）。
+    /// 判断是否为资源不存在错误（[`Self::NotFound`]）。
     #[must_use]
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound(_))
@@ -346,7 +346,7 @@ impl Error {
         matches!(self, Self::Transport(error) if error.kind() == TransportErrorKind::Timeout)
     }
 
-    /// 返回稳定的蛇形命名错误大类标识符（与 JSON 序列化中的 `code` 字段一致）。
+    /// 返回错误大类的 `snake_case` 标识符（与 JSON 序列化中的 `code` 字段一致）。
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {

@@ -1,6 +1,6 @@
 use crate::runtime::discard;
 
-/// 本库分配的字节缓冲区不透明句柄，内容为 UTF-8 JSON（不含结尾 NUL），须通过 `zzu_buffer_free` 释放。
+/// 本库分配的字节缓冲区不透明句柄，内容为 UTF-8 JSON（不含结尾 `NUL`），须通过 `zzu_buffer_free` 释放。
 pub struct ZzuBuffer(Vec<u8>);
 
 impl ZzuBuffer {
@@ -9,7 +9,7 @@ impl ZzuBuffer {
     }
 }
 
-/// 返回缓冲区首字节地址（`buffer` 为 `NULL` 时返回 `NULL`），不保证以 NUL 结尾。
+/// 返回缓冲区首字节地址（`buffer` 为 `NULL` 时返回 `NULL`），不保证以 `NUL` 结尾。
 ///
 /// 返回的指针在调用 `zzu_buffer_free` 前有效；长度须通过 `zzu_buffer_len` 获取。
 ///

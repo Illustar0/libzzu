@@ -46,7 +46,7 @@ struct RuntimeOptions {
     root_certificates_pem: Option<String>,
 }
 
-/// Android 的平台校验器依赖已移除的 JNI 初始化，因此那里必须显式提供根证书。
+/// Android 平台校验器会在工作线程上同步下载吊销列表并阻塞超时，因此必须显式提供根证书。
 fn trust_roots(root_certificates_pem: Option<String>) -> FfiResult<TrustRoots> {
     match root_certificates_pem {
         Some(pem) => Ok(TrustRoots::from_pem_bundle(pem.as_bytes())?),

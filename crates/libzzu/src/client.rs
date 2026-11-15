@@ -32,7 +32,7 @@ pub struct ZzuCall {
 ///
 /// 回调运行在后台工作线程上，须尽快返回；`status` 为 `ZZU_OK` 时 `payload` 为结果 JSON，
 /// 否则为错误 JSON。`payload` 恒非空，其所有权移交给回调方，须通过 `zzu_buffer_free` 释放，
-/// 可以跨线程保存到回调返回之后。
+/// 可传往其他线程并在回调返回后继续使用。
 pub type ZzuCallback = Option<
     unsafe extern "C" fn(user_data: *mut c_void, status: ZzuStatus, payload: *mut ZzuBuffer),
 >;
@@ -42,7 +42,7 @@ pub(crate) trait Service: Send + Sync + 'static {
     fn call(&self, method: &str, params: &[u8]) -> impl Future<Output = FfiResult<Vec<u8>>> + Send;
 }
 
-/// 各客户端句柄共用的内部结构：一个服务加上它使用的运行时与时限。
+/// 各客户端句柄共用的内部结构，封装客户端服务及其运行时与操作时限。
 pub(crate) struct Client<T> {
     core: Arc<ClientCore<T>>,
 }

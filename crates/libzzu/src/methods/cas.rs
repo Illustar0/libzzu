@@ -144,15 +144,15 @@ pub unsafe extern "C" fn zzu_cas_free(cas: *mut ZzuCasClient) {
 
 /// 异步调用 CAS 客户端方法；立即返回，绝不在当前调用栈内同步触发回调。
 ///
-/// 返回 `ZZU_OK` 时 `callback` 必定在后台工作线程上恰好触发一次（可能早于本函数返回，但 `*out_call` 保证已在触发前写入）；
+/// 返回 `ZZU_OK` 时 `callback` 必定在后台工作线程上恰好触发一次；触发可能早于本函数返回，但保证在写入 `*out_call` 之后。
 /// 返回非零状态码时回调绝不触发。同步返回值仅校验句柄、方法名、回调与输入切片指针；`params` JSON 解析及后续执行错误一律经回调上报。
 ///
-/// `method` 为 NUL 结尾的方法名（如 `"login"`）；`params` 为 UTF-8 JSON 对象，`params_len` 为 `0` 表示无参数（此时 `params` 可传 `NULL`）。
+/// `method` 为 `NUL` 结尾的方法名（如 `"login"`）；`params` 为 UTF-8 JSON 对象，`params_len` 为 `0` 表示无参数（此时 `params` 可传 `NULL`）。
 ///
 /// # Safety
 ///
 /// - `cas` 必须为 `NULL` 或指向尚未释放的有效句柄。
-/// - `method` 必须为 `NULL` 或调用期间可读的 NUL 结尾字符串。
+/// - `method` 必须为 `NULL` 或调用期间可读的 `NUL` 结尾字符串。
 /// - `params` 在 `params_len` 非零时必须指向调用期间可读的 `params_len` 字节；本函数返回后不再访问。
 /// - `user_data` 由本库原样传回，必须可在任意线程使用，且在回调触发前保持有效。
 /// - `out_call` 可以为 `NULL`（无需取消时）；若非空则必须对齐且独占可写，写入的句柄须通过 `zzu_call_free` 释放。

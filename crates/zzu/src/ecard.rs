@@ -27,7 +27,7 @@ const SESSION_MAX_AGE_SECONDS: i64 = 45 * 60;
 /// 电费页面默认的 `appCode`，前端在配置、账户查询与扣款请求中作为 `appId` 发送。
 const ELECTRIC_APP_ID: &str = "electric";
 
-/// 经过格式校验的宿舍房间标识符（格式为 `area-building--level-room`，四段均非空且不含 `-`）。
+/// 宿舍房间号，格式为 `area-building--level-room`（四段均非空且不含 `-`）。
 ///
 /// # Examples
 ///
@@ -88,8 +88,8 @@ impl fmt::Display for RoomId {
 }
 
 impl RoomId {
-    /// 构造电费账户查询与扣款接口所需的房间位置参数：与前端一致，`area`、`building`、`level` 为单段编码，
-    /// `room` 为完整房间号，并附带 `appId`（`"1-2--3-301"` 对应 `area = "1"`、`building = "2"`、`level = "3"`）。
+    /// 构造电费账户查询与扣款接口的房间位置参数：`area`、`building`、`level` 拆为单段编码
+    /// （如 `"1-2--3-301"` 对应 `"1"`、`"2"`、`"3"`），`room` 保留完整房间号，并附带 `appId`。
     fn location(&self) -> LocationRequest<'_> {
         let (building_path, room_path) = self.0.split_once("--").expect("validated room");
         let (area, building) = building_path.split_once('-').expect("validated building");
@@ -127,11 +127,11 @@ struct EcardState {
 
 /// 校园卡与宿舍电控服务客户端。
 ///
-/// 共享 [`CasClient`] 的统一身份认证会话。内部仅在读写会话与默认房间缓存时短暂持锁，发起网络请求前即释放状态锁，
-/// 因此查询与收银台预支付方法均以 `&self` 并发执行；会话变更（[`Self::login`]、[`Self::logout`]）与扣款、下单
+/// 共享 [`CasClient`] 的统一身份认证会话。内部仅在读写会话与默认房间缓存时短暂持锁，发起网络请求前即释放状态锁；
+/// 查询与收银台预支付方法均以 `&self` 并发执行，会话变更（[`Self::login`]、[`Self::logout`]）与扣款、下单
 /// （[`Self::recharge_energy`]、[`Self::create_recharge_order`]）仍要求 `&mut self`。
 ///
-/// 客户端不启动后台刷新任务：每次请求前按需检查校园卡 `access_token`，满 45 分钟或底层 CAS 令牌变更时自动换取新令牌；
+/// 客户端不启动后台刷新任务：每次请求前按需检查校园卡 `access_token`，满 45 分钟或底层 CAS 令牌变更时自动换取新令牌。
 /// 令牌换新单独互斥，多个并发请求等待并复用同一次换新结果。
 pub struct EcardClient {
     http: Client,
@@ -141,18 +141,18 @@ pub struct EcardClient {
 }
 
 impl EcardClient {
-    /// 基于共享的 [`CasClient`] 与默认 HTTP 配置创建校园卡客户端。
+    /// 使用共享的 [`CasClient`] 与默认 HTTP 配置创建校园卡客户端。
     ///
     /// # Errors
     ///
-    /// 当默认 HTTP 客户端初始化失败时返回错误。
+    /// 默认 HTTP 客户端初始化失败时返回错误。
     pub fn new(cas: CasClient) -> Result<Self> {
         Ok(Self::with_http_client(cas, http::client()?))
     }
 
-    /// 基于共享的 [`CasClient`] 与自定义 [`reqwest::Client`] 创建校园卡客户端。
+    /// 使用共享的 [`CasClient`] 与自定义 [`reqwest::Client`] 创建校园卡客户端。
     ///
-    /// 传入的 `client` 必须禁用自动重定向（例如由 [`crate::http_client_builder`] 构建），以便捕获单点登录跳转中的 `tid` 参数。
+    /// `client` 必须禁用自动重定向（如通过 [`crate::http_client_builder`] 构建），以便捕获单点登录跳转中的 `tid` 参数。
     #[must_use]
     pub fn with_http_client(cas: CasClient, client: Client) -> Self {
         Self {
@@ -177,8 +177,8 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 当底层 [`CasClient`] 尚未登录或令牌不可用时返回 [`Error::Authentication`]。
-    /// - 当单点登录跳转响应缺少 `Location` 或 `tid`、令牌交换失败或网络异常时返回相应错误。
+    /// - 底层 [`CasClient`] 尚未登录或令牌不可用时返回 [`Error::Authentication`]。
+    /// - 单点登录跳转响应缺少 `Location` 或 `tid`、令牌交换失败或网络异常时返回错误。
     pub async fn login(&mut self) -> Result<()> {
         self.logout();
         let cas_token = self.cas.user_token().await?;
@@ -226,8 +226,8 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 当客户端尚未调用 [`Self::login`] 时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 当会话刷新、网络请求、远端业务校验或房间号解析失败时返回相应错误。
+    /// - 客户端尚未调用 [`Self::login`] 时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
+    /// - 会话刷新、网络请求、远端业务校验或房间号解析失败时返回错误。
     pub async fn default_room(&self) -> Result<RoomId> {
         #[derive(Deserialize)]
         struct Config {
@@ -258,8 +258,8 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 当客户端尚未登录或底层 CAS 会话未认证时返回 [`Error::Authentication`]。
-    /// - 当门户信息卡片查询失败或余额字段不是合法有限数值时返回相应错误。
+    /// - 客户端尚未登录或底层 CAS 会话未认证时返回 [`Error::Authentication`]。
+    /// - 门户信息卡片查询失败或余额字段不是合法十进制金额时返回错误。
     pub async fn balance(&self) -> Result<crate::Decimal> {
         self.access_token().await?;
         let cards = self.cas.info_cards().await?;
@@ -279,8 +279,8 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 当 `parent` 不符合上述四种格式（例如包含空段、多余连字符或传入完整四段房间号）时返回 [`Error::InvalidInput`]。
-    /// - 当客户端尚未登录、网络请求失败或远端返回错误时返回相应错误。
+    /// - `parent` 不符合上述四种格式（如包含空段、多余连字符或传入完整四段房间号）时返回 [`Error::InvalidInput`]。
+    /// - 客户端尚未登录、网络请求失败或远端返回错误时返回错误。
     pub async fn locations(&self, parent: &str) -> Result<BTreeMap<String, String>> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -309,12 +309,12 @@ impl EcardClient {
             .collect())
     }
 
-    /// 查询指定宿舍房间（传入 `None` 时使用 [`Self::default_room`]）的剩余电量（单位：度）。
+    /// 查询指定宿舍房间的剩余电量（单位：度；`room` 为 `None` 时取 [`Self::default_room`]）。
     ///
     /// # Errors
     ///
-    /// - 当客户端尚未登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 当获取默认房间、请求电费账户或解析 `quantity` 电量字段失败时返回相应错误。
+    /// - 客户端尚未登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
+    /// - 获取默认房间、请求电费账户或解析 `quantity` 电量字段失败时返回错误。
     pub async fn remaining_energy(&self, room: Option<&RoomId>) -> Result<f64> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -354,10 +354,10 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 当 `amount == 0` 或 `payment_password` 为空字符串时返回 [`Error::InvalidInput`]。
-    /// - 当客户端尚未登录、公钥解析或加解密失败、网络异常或远端拒绝扣款时返回相应错误。
-    /// - 若支付响应缺失 `success` 确认字段导致扣款结果未知，返回 [`Error::Decode`]；加密响应解密失败时返回的
-    ///   [`Error::Crypto`] 同样意味着结果未知。两种情况下调用方都应先核对余额再决定是否重试。
+    /// - `amount == 0` 或 `payment_password` 为空字符串时返回 [`Error::InvalidInput`]。
+    /// - 客户端尚未登录、公钥解析或加解密失败、网络异常或远端拒绝扣款时返回错误。
+    /// - 支付响应缺失 `success` 确认字段时返回 [`Error::Decode`]，加密响应解密失败时返回 [`Error::Crypto`]；
+    ///   两者均代表扣款结果未知，调用方须先核对余额再决定是否重试。
     pub async fn recharge_energy(
         &mut self,
         payment_password: &str,
@@ -456,7 +456,7 @@ impl EcardClient {
     }
 }
 
-/// 还原校园卡加密响应：与前端一致，`success` 不为真且带非空 `data` 时，用请求时生成的 SM4 密钥解密 `data` 得到实际响应。
+/// 还原校园卡加密响应：与前端一致，`success` 不为 `true` 且带非空 `data` 时，用请求时生成的 SM4 密钥解密 `data` 得到实际响应。
 fn decrypt_response(response: &Value, sm4_key: &str) -> Result<Value> {
     let is_success = response.get("success").and_then(Value::as_bool) == Some(true);
     match response.get("data").and_then(Value::as_str) {
@@ -545,7 +545,7 @@ impl Default for LocationRequest<'_> {
     }
 }
 
-/// 构造 `/utilities/location` 目录检索请求：`area`、`building`、`level` 传入拆分后的单段编码，并用 `locationType` 指定要检索的层级。
+/// 构造 `/utilities/location` 目录检索请求：将 `parent` 拆为 `area`、`building`、`level` 单段编码，并按层级设置 `locationType`。
 fn location_query(parent: &str) -> Result<LocationRequest<'_>> {
     let invalid = || {
         Error::invalid_input("位置格式应为空、area、area-building 或 area-building--level".into())

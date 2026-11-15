@@ -56,8 +56,8 @@ impl RechargeOrder {
     ///
     /// # Errors
     ///
-    /// - 当 `channel.id` 为空字符串时返回 [`Error::InvalidInput`]。
-    /// - 当订单参数序列化或收银台 URL 校验失败时返回 [`Error::Decode`]。
+    /// - `channel.id` 为空字符串时返回 [`Error::InvalidInput`]。
+    /// - 订单参数序列化或收银台 URL 校验失败时返回 [`Error::Decode`]。
     pub fn checkout_url_for(&self, channel: &PaymentChannel) -> Result<Url> {
         validate_channel(channel)?;
         self.payment.checkout_url(Some(channel))
@@ -146,8 +146,8 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 当客户端尚未调用 [`Self::login`] 或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
-    /// - 当网络传输失败、远端返回业务错误或面额字段解析失败时返回相应错误。
+    /// - 客户端尚未调用 [`Self::login`] 或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
+    /// - 网络传输失败、远端返回业务错误或面额字段解析失败时返回错误。
     pub async fn recharge_config(&self) -> Result<RechargeConfig> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -186,9 +186,9 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 当 `amount == 0` 时返回 [`Error::InvalidInput`]。
-    /// - 当校园卡服务未开放网页收银台充值时返回 [`Error::Remote`]。
-    /// - 当客户端尚未登录、网络请求失败，或返回的订单流水号与请求金额不一致时返回相应错误。
+    /// - `amount == 0` 时返回 [`Error::InvalidInput`]。
+    /// - 校园卡服务未开放网页收银台充值时返回 [`Error::Remote`]。
+    /// - 客户端尚未登录、网络请求失败，或返回的订单流水号与请求金额不一致时返回错误。
     pub async fn create_recharge_order(&mut self, amount: u32) -> Result<RechargeOrder> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -235,11 +235,11 @@ impl EcardClient {
 
     /// 查询充值订单 `order` 在学校收银台可用的支付渠道列表。
     ///
-    /// 本方法直接访问学校收银台接口，无需校园卡客户端处于已登录状态。
+    /// 直接访问学校收银台接口，无需校园卡客户端登录。
     ///
     /// # Errors
     ///
-    /// 当网络传输失败、收银台返回非成功业务状态或渠道列表解析失败时返回相应错误。
+    /// 网络传输失败、收银台返回业务错误或渠道列表解析失败时返回错误。
     pub async fn payment_channels(&self, order: &RechargeOrder) -> Result<Vec<PaymentChannel>> {
         #[derive(Deserialize)]
         struct Channels {
@@ -262,12 +262,12 @@ impl EcardClient {
 
     /// 向学校收银台提交预支付请求，提取拉起第三方支付所需的跳转链接或 `POST` 表单。
     ///
-    /// `context` 传 `None` 时默认按 [`PaymentDevice::Android`] 与空 IP 上报。本方法无需校园卡客户端处于已登录状态。
+    /// `context` 传 `None` 时默认按 [`PaymentDevice::Android`] 与空 IP 上报。本方法无需校园卡客户端登录。
     ///
     /// # Errors
     ///
-    /// - 当 `channel.id` 为空字符串时返回 [`Error::InvalidInput`]。
-    /// - 当网络传输失败、收银台返回业务拒绝，或预支付响应中的跳转地址与表单不符合无凭据 HTTPS 规范时返回相应错误。
+    /// - `channel.id` 为空字符串时返回 [`Error::InvalidInput`]。
+    /// - 网络传输失败、收银台返回业务错误，或预支付响应中的跳转地址与表单不符合无凭据 HTTPS 规范时返回错误。
     pub async fn prepare_payment(
         &self,
         order: &RechargeOrder,
