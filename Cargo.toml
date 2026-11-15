@@ -6,6 +6,7 @@ resolver = "3"
 version = "0.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+readme = "README.md"
 repository = "https://github.com/Illustar0/libzzu"
 
 [workspace.dependencies]

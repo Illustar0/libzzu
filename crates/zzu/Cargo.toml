@@ -2,9 +2,12 @@
 name = "zzu"
 version.workspace = true
 edition.workspace = true
-description = "Async Rust client for zzu campus services"
+description = "Async Rust client for Zhengzhou University campus services"
 license.workspace = true
+readme.workspace = true
 repository.workspace = true
+keywords = ["sdk", "client", "cas", "university"]
+categories = ["api-bindings", "asynchronous", "web-programming::http-client"]
 
 [dependencies]
 base64.workspace = true
