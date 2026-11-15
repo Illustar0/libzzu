@@ -24,6 +24,8 @@ pub use recharge::{
 
 const ECARD_URL: &str = "https://ecard.v.zzu.edu.cn/server";
 const SESSION_MAX_AGE_SECONDS: i64 = 45 * 60;
+/// 电费页面默认的 `appCode`，前端在配置、账户查询与扣款请求中作为 `appId` 发送。
+const ELECTRIC_APP_ID: &str = "electric";
 
 /// 经过格式校验的宿舍房间标识符（格式为 `area-building--level-room`，四段均非空且不含 `-`）。
 ///
@@ -86,16 +88,18 @@ impl fmt::Display for RoomId {
 }
 
 impl RoomId {
-    /// 构造电费账户查询与扣款接口所需的房间位置参数（`building` 与 `level` 须保留上级前缀，如 `"1-2"`、`"1-2--3"`）。
+    /// 构造电费账户查询与扣款接口所需的房间位置参数：与前端一致，`area`、`building`、`level` 为单段编码，
+    /// `room` 为完整房间号，并附带 `appId`（`"1-2--3-301"` 对应 `area = "1"`、`building = "2"`、`level = "3"`）。
     fn location(&self) -> LocationRequest<'_> {
-        let (building, _) = self.0.split_once("--").expect("validated room");
-        let (area, _) = building.split_once('-').expect("validated building");
-        let (level, _) = self.0.rsplit_once('-').expect("validated floor");
+        let (building_path, room_path) = self.0.split_once("--").expect("validated room");
+        let (area, building) = building_path.split_once('-').expect("validated building");
+        let (level, _) = room_path.split_once('-').expect("validated floor");
         LocationRequest {
             area,
             building,
             level,
             room: &self.0,
+            app_id: Some(ELECTRIC_APP_ID),
             ..LocationRequest::default()
         }
     }
@@ -242,7 +246,7 @@ impl EcardClient {
             self.http
                 .post(format!("{ECARD_URL}/utilities/config"))
                 .header("Authorization", token)
-                .json(&json!({"utilityType":"electric"})),
+                .json(&json!({"utilityType":"electric","appId":ELECTRIC_APP_ID})),
         )
         .await?;
         let config: Config = http::ecard_data(response)?;
@@ -376,7 +380,6 @@ impl EcardClient {
             amt: String,
             timestamp: i64,
             customfield: BTreeMap<String, String>,
-            app_id: &'a str,
         }
         if amount == 0 || payment_password.is_empty() {
             return Err(Error::invalid_input(
@@ -398,7 +401,6 @@ impl EcardClient {
             amt: amount.to_string(),
             timestamp: Timestamp::now().as_millisecond(),
             customfield: BTreeMap::new(),
-            app_id: "electric",
         };
         let sm4_key = crypto::random_sm4_key();
         let body = json!({
@@ -522,6 +524,8 @@ struct LocationRequest<'a> {
     level: &'a str,
     room: &'a str,
     sub_area: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_id: Option<&'a str>,
 }
 
 impl Default for LocationRequest<'_> {
@@ -536,11 +540,12 @@ impl Default for LocationRequest<'_> {
             level: "",
             room: "",
             sub_area: "",
+            app_id: None,
         }
     }
 }
 
-/// 构造 `/utilities/location` 目录检索请求：与 [`RoomId::location`] 不同，该接口要求 `area`、`building`、`level` 传入拆分后的单段编码。
+/// 构造 `/utilities/location` 目录检索请求：`area`、`building`、`level` 传入拆分后的单段编码，并用 `locationType` 指定要检索的层级。
 fn location_query(parent: &str) -> Result<LocationRequest<'_>> {
     let invalid = || {
         Error::invalid_input("位置格式应为空、area、area-building 或 area-building--level".into())
@@ -674,7 +679,20 @@ mod tests {
     #[test]
     fn room_and_location_ids_are_validated_before_requests() {
         let room: RoomId = "1-2--3-301".parse().unwrap();
-        assert_eq!(room.location().level, "1-2--3");
+        assert_eq!(
+            serde_json::to_value(room.location()).unwrap(),
+            json!({
+                "utilityType": "electric",
+                "bigArea": "",
+                "area": "1",
+                "building": "2",
+                "unit": "",
+                "level": "3",
+                "room": "1-2--3-301",
+                "subArea": "",
+                "appId": "electric",
+            }),
+        );
         for invalid in ["", "1-2-3-301", "1--3-301", "1-2--3-", "1-2--3-301-x"] {
             assert!(invalid.parse::<RoomId>().is_err());
         }
