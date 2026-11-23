@@ -713,4 +713,87 @@ mod tests {
             .is_invalid_input()
         );
     }
+
+    #[test]
+    fn rooms_request_serializes_filters_in_upstream_wire_format() {
+        let query = ClassroomQuery {
+            date: "2026-11-23".parse().unwrap(),
+            campus_id: Some(2),
+            building_ids: vec![5, 6],
+            room_type_ids: vec![2],
+            floors: vec![1, 2],
+            min_seats: Some(38),
+            max_seats: Some(74),
+        };
+        let payload = serde_json::to_value(RoomsRequest::new(&query, 2, 44)).unwrap();
+        assert_eq!(
+            payload,
+            json!({
+                "currentPage": 2,
+                "pageSize": 44,
+                "campusAssoc": 2,
+                "buildingIds": [5, 6],
+                "roomTypeIds": [2],
+                "floors": [1, 2],
+                "minSeat": "38",
+                "maxSeat": "74",
+                "date": "2026-11-23"
+            })
+        );
+    }
+
+    #[test]
+    fn raw_classroom_page_maps_page_info_and_normalizes_null_data() {
+        let raw: RawClassroomPage = serde_json::from_value(json!({
+            "data": null,
+            "_page_": {
+                "currentPage": 3,
+                "rowsInPage": 0,
+                "rowsPerPage": 44,
+                "totalRows": 100,
+                "totalPages": 3
+            }
+        }))
+        .unwrap();
+        let page = ClassroomPage::from(raw);
+        assert_eq!(page.items, []);
+        assert_eq!(page.page, 3);
+        assert_eq!(page.page_size, 44);
+        assert_eq!(page.total_items, 100);
+        assert_eq!(page.total_pages, 3);
+    }
+
+    fn room(id: i64, name_zh: &str) -> ClassroomOccupancy {
+        ClassroomOccupancy {
+            id,
+            code: id.to_string(),
+            name_zh: name_zh.to_owned(),
+            name_en: None,
+            building_id: 5,
+            campus_name_zh: "主校区".to_owned(),
+            occupations: Vec::new(),
+        }
+    }
+
+    fn page(index: u32, items: Vec<ClassroomOccupancy>) -> ClassroomPage {
+        ClassroomPage {
+            items,
+            page: index,
+            page_size: 2,
+            total_items: 5,
+            total_pages: 3,
+        }
+    }
+
+    #[test]
+    fn merge_pages_sorts_out_of_order_pages_before_deduplicating() {
+        let first = page(1, vec![room(1, "R1"), room(2, "R2")]);
+        let rest = vec![
+            (3, page(3, vec![room(4, "R4-dup"), room(5, "R5")])),
+            (2, page(2, vec![room(3, "R3"), room(4, "R4")])),
+        ];
+        let merged = merge_pages(first, rest);
+        let names: Vec<&str> = merged.iter().map(|room| room.name_zh.as_str()).collect();
+        assert_eq!(names, ["R1", "R2", "R3", "R4", "R5"]);
+    }
 }
