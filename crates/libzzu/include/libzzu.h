@@ -217,7 +217,9 @@ void zzu_call_free(struct ZzuCall *call);
 /**
  * 创建统一身份认证客户端（本地完成，不发起网络请求）。
  *
- * `config` 为 UTF-8 JSON 对象：`account`、`password` 必填，`timeoutMs` 可选（单次操作总时限，单位毫秒，默认 `15000`）。
+ * `config` 是 UTF-8 JSON 对象，必须包含字符串字段 `account`、`password` 和 `deviceId`。
+ * `deviceId` 可以是任意包含非空白字符的字符串，但它本质上是凭证，请确保它唯一且难以预测。
+ * `timeoutMs` 可选，表示单次操作的总时限，单位为毫秒，默认为 `15000`。
  *
  * # Safety
  *

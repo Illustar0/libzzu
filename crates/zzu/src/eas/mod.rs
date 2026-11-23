@@ -452,7 +452,7 @@ mod tests {
     }
 
     async fn authenticated_eas(base_url: String) -> (UndergradEasClient, String) {
-        let cas = CasClient::new("", "").unwrap();
+        let cas = CasClient::new("", "", "test-device").unwrap();
         let token = format!(
             "e30.{}.c2ln",
             URL_SAFE_NO_PAD.encode(json!({"exp": Timestamp::now().as_second() + 3600}).to_string())
@@ -769,7 +769,7 @@ mod tests {
 
     #[tokio::test]
     async fn classroom_queries_reject_invalid_inputs_and_unauthenticated_client() {
-        let cas = CasClient::new("", "").unwrap();
+        let cas = CasClient::new("", "", "test-device").unwrap();
         let eas = UndergradEasClient::new(cas).unwrap();
         let date: Date = "2026-11-23".parse().unwrap();
         let query = ClassroomQuery::new(date);

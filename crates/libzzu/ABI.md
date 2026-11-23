@@ -108,6 +108,7 @@ ZzuBuffer *error = NULL;
 ZzuCall *call = NULL;
 
 // 1. 初始化运行时与客户端（本地完成，无网络请求）
+// cfg 是包含 account、password 和当前设备 deviceId 的 JSON 字符串。
 zzu_runtime_new(NULL, 0, &runtime, NULL);
 zzu_cas_new(runtime, (const uint8_t *)cfg, strlen(cfg), &cas, &error);
 zzu_eas_new(cas, &eas, &error);
@@ -234,7 +235,7 @@ zzu_runtime_free(runtime);
 | 函数 | 配置 JSON 结构 | 字段要求与默认值 |
 | --- | --- | --- |
 | `zzu_runtime_new` | `{"workerThreads?": 2, "rootCertificatesPem?": "..."}` | 可传 `NULL` 与长度 `0`（Android 除外，见“Android 平台初始化”）；`workerThreads` 为正整数，默认 `2`；`rootCertificatesPem` 为 PEM 格式的根证书，提供时只信任它们 |
-| `zzu_cas_new` | `{"account": "...", "password": "...", "timeoutMs?": 15000}` | `account`、`password` 为字符串（必填）；`timeoutMs` 为正整数毫秒，默认 `15000` |
+| `zzu_cas_new` | `{"account": "...", "password": "...", "deviceId": "...", "timeoutMs?": 15000}` | `account`、`password`、`deviceId` 为必填字符串。`deviceId` 必须含有非空白字符，缺失或无效时返回 `ZZU_INVALID_INPUT`。`timeoutMs` 为正整数毫秒，默认 `15000` |
 | `zzu_eas_new` | 无配置参数 | 沿用所传入 `ZzuCasClient` 的运行时、CAS 会话与 `timeoutMs` |
 | `zzu_ecard_new` | 无配置参数 | 沿用所传入 `ZzuCasClient` 的运行时、CAS 会话与 `timeoutMs` |
 | `zzu_portal_discover` / `_blocking` | `{"timeoutMs?": 15000}` | 可传 `NULL` 与长度 `0`；`timeoutMs` 为正整数毫秒，默认 `15000` |
@@ -249,6 +250,9 @@ zzu_runtime_free(runtime);
 
 ### `ZzuCasClient`（统一身份认证）
 
+`deviceId` 可以是任意包含非空白字符的字符串，但它本质上是凭证，请确保它唯一且难以预测。
+密码登录和 MFA 检测都使用创建客户端时传入的 `deviceId`。
+
 | 方法名 | 参数 JSON 字段 | 结果 JSON 类型 | 行为说明 |
 | --- | --- | --- | --- |
 | `login` | 无 | `null` | 登录 CAS 会话；已缓存可复用令牌时直接激活，不发起网络请求。若需多因素认证，返回 `ZZU_AUTHENTICATION_ERROR`（`kind: "mfa_required"`）。可先调用 `prepare_sms` 预览脱敏手机号，再依次调用 `send_sms`、`verify_sms` 与 `login` |
@@ -258,7 +262,6 @@ zzu_runtime_free(runtime);
 | `set_tokens` | `userToken: string`（兼容别名 `idToken`）、`refreshToken: string` | `null` | 预置外部持久化的 JWT 令牌对并重置登录态，调用后**仍须调用 `login`** 激活会话。若令牌格式非法或已过期，返回 `ZZU_INVALID_INPUT` 而非 `token_expired` |
 | `tokens` | 无 | `{"userToken": string, "refreshToken": string} \| null` | 读取当前缓存的令牌对；未设置且未登录时返回 `null` |
 | `user_token` | 无 | `string` | 本地校验并返回可用的 `userToken`；未登录返回 `not_authenticated`，剩余有效期不足 15 分钟或 `refreshToken` 已过期返回 `token_expired` |
-| `set_device` | `deviceId: string` | `null` | 设置登录与 MFA 检测时上报的设备标识（默认 `"libzzu"`，不得为空字符串），同时重置未完成的 MFA 状态 |
 | `detect_mfa` | 无 | `{"isRequired": boolean, "canUseSms": boolean, "isVerified": boolean}` | 向服务端探测当前账号与设备是否需要 MFA 以及是否支持短信验证；每次调用都会重置未完成的 MFA 状态 |
 | `prepare_sms` | 无 | `{"securePhone": string \| null}` | 初始化短信 MFA 会话并返回脱敏手机号，不发送短信。未探测 MFA 时会先自动探测；同一轮验证内重复调用直接返回缓存结果。无需 MFA 或不支持短信时返回 `invalid_mfa_state`；收到服务端拒绝或无效响应时自动清空 MFA 状态 |
 | `send_sms` | 无 | `{"securePhone": string \| null}` | 向绑定安全手机发送短信验证码并返回脱敏手机号。未探测或未初始化时会自动完成 `prepare_sms`；无需 MFA 或不支持短信时返回 `invalid_mfa_state`。发送失败时会保留当前 MFA 会话，避免作废已发验证码；若状态已过期，可调用 `detect_mfa` 重置 |

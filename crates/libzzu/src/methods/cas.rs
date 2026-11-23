@@ -24,13 +24,8 @@ pub struct ZzuCasClient(pub(super) Client<CasClient>);
 struct CasConfig {
     account: String,
     password: String,
-    timeout_ms: Option<NonZeroU64>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct SetDevice {
     device_id: String,
+    timeout_ms: Option<NonZeroU64>,
 }
 
 #[derive(Deserialize)]
@@ -74,11 +69,6 @@ impl ClientService for CasClient {
             }
             "tokens" => reply(&self.tokens().await),
             "user_token" => reply(&self.user_token().await?),
-            "set_device" => {
-                let SetDevice { device_id } = parse(params)?;
-                self.set_device(device_id).await?;
-                done()
-            }
             "detect_mfa" => reply(&self.detect_mfa().await?),
             "prepare_sms" => reply(&self.prepare_sms().await?),
             "send_sms" => reply(&self.send_sms().await?),
@@ -107,7 +97,9 @@ impl ClientService for CasClient {
 
 /// 创建统一身份认证客户端（本地完成，不发起网络请求）。
 ///
-/// `config` 为 UTF-8 JSON 对象：`account`、`password` 必填，`timeoutMs` 可选（单次操作总时限，单位毫秒，默认 `15000`）。
+/// `config` 是 UTF-8 JSON 对象，必须包含字符串字段 `account`、`password` 和 `deviceId`。
+/// `deviceId` 可以是任意包含非空白字符的字符串，但它本质上是凭证，请确保它唯一且难以预测。
+/// `timeoutMs` 可选，表示单次操作的总时限，单位为毫秒，默认为 `15000`。
 ///
 /// # Safety
 ///
@@ -132,10 +124,16 @@ pub unsafe extern "C" fn zzu_cas_new(
                 .ok_or_else(|| FfiError::InvalidInput("运行时句柄为空".into()))?;
             let config: CasConfig = parse(bytes(config, config_len)?)?;
             let http = runtime.worker.trust_roots.client()?;
+            let cas = CasClient::with_http_client(
+                config.account,
+                config.password,
+                config.device_id,
+                http,
+            )?;
             Ok(ZzuCasClient(Client::new(
                 runtime.worker.clone(),
                 time_limit(config.timeout_ms),
-                CasClient::with_http_client(config.account, config.password, http),
+                cas,
             )))
         })
     }

@@ -169,7 +169,6 @@ impl MfaState {
 }
 
 struct Session {
-    device_id: String,
     key: Option<RsaPublicKey>,
     tokens: Option<Tokens>,
     is_logged_in: bool,
@@ -180,6 +179,7 @@ struct Inner {
     http: Client,
     account: String,
     password: String,
+    device_id: String,
     session: Mutex<Session>,
 }
 
@@ -193,39 +193,54 @@ pub struct CasClient {
 }
 
 impl CasClient {
-    /// 使用账号、密码与默认 HTTP 配置创建统一身份认证客户端。
+    /// 使用账号、密码、设备 ID 与默认 HTTP 配置创建统一身份认证客户端。
     ///
+    /// `device_id` 可以是任意包含非空白字符的字符串，但它本质上是凭证，请确保它唯一且难以预测。
     /// 仅初始化本地状态，不发起网络请求；实际认证须调用 [`Self::login`]。
     ///
     /// # Errors
     ///
-    /// 底层 TLS 或默认 HTTP 客户端初始化失败时返回错误。
-    pub fn new(account: impl Into<String>, password: impl Into<String>) -> Result<Self> {
-        Ok(Self::with_http_client(account, password, http::client()?))
+    /// `device_id` 为空或仅含空白字符时返回 [`Error::InvalidInput`]。底层 TLS 或默认 HTTP 客户端初始化失败时也会返回错误。
+    pub fn new(
+        account: impl Into<String>,
+        password: impl Into<String>,
+        device_id: impl Into<String>,
+    ) -> Result<Self> {
+        Self::with_http_client(account, password, device_id, http::client()?)
     }
 
     /// 使用自定义 [`reqwest::Client`] 创建统一身份认证客户端。
     ///
     /// `client` 必须禁用自动重定向（如通过 [`crate::http_client_builder`] 构建），以便 [`Self::service_login_url`] 直接读取单点登录响应的 `Location` 头。
+    /// `device_id` 可以是任意包含非空白字符的字符串，请为每台设备使用唯一的 ID。
+    ///
+    /// # Errors
+    ///
+    /// `device_id` 为空或仅含空白字符时返回 [`Error::InvalidInput`]。
     pub fn with_http_client(
         account: impl Into<String>,
         password: impl Into<String>,
+        device_id: impl Into<String>,
         client: Client,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let device_id = device_id.into();
+        if device_id.trim().is_empty() {
+            return Err(Error::invalid_input("设备 ID 必须包含非空白字符".into()));
+        }
+        Ok(Self {
             inner: Arc::new(Inner {
                 http: client,
                 account: account.into(),
                 password: password.into(),
+                device_id,
                 session: Mutex::new(Session {
-                    device_id: "libzzu".into(),
                     key: None,
                     tokens: None,
                     is_logged_in: false,
                     mfa: MfaState::default(),
                 }),
             }),
-        }
+        })
     }
 
     /// 预置外部持久化的认证令牌对，并重置会话的登录与 MFA 状态。
@@ -254,22 +269,6 @@ impl CasClient {
     /// 判断当前会话是否已完成登录。
     pub async fn is_logged_in(&self) -> bool {
         self.inner.session.lock().await.is_logged_in
-    }
-
-    /// 设置登录与 MFA 检测时上报的设备标识（默认 `"libzzu"`），并清空未完成的 MFA 状态。
-    ///
-    /// # Errors
-    ///
-    /// `device_id` 为空字符串时返回 [`Error::InvalidInput`]。
-    pub async fn set_device(&self, device_id: impl Into<String>) -> Result<()> {
-        let device_id = device_id.into();
-        if device_id.is_empty() {
-            return Err(Error::invalid_input("device_id 不能为空".into()));
-        }
-        let mut session = self.inner.session.lock().await;
-        session.device_id = device_id;
-        session.mfa = MfaState::default();
-        Ok(())
     }
 
     /// 登录统一身份认证会话。
@@ -345,7 +344,7 @@ impl CasClient {
             app_id: "com.supwisdom.zzu",
             os_type: "android",
             geo: "",
-            device_id: &session.device_id,
+            device_id: &self.inner.device_id,
             client_id: "",
             mfa_state: &session.mfa.state,
         };
@@ -440,7 +439,7 @@ impl CasClient {
         };
         let query = DetectionRequest {
             credentials,
-            device_id: &session.device_id,
+            device_id: &self.inner.device_id,
         };
         let request = self
             .inner
@@ -961,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn token_reuse_and_logout_are_shared_across_clients() {
-        let cas = CasClient::new("", "").unwrap();
+        let cas = CasClient::new("", "", "test-device").unwrap();
         let other = cas.clone();
         let token = format!(
             "e30.{}.c2ln",

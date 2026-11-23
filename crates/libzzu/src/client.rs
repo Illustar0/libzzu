@@ -372,7 +372,7 @@ mod tests {
         fn new() -> Self {
             let mut runtime = ptr::null_mut();
             let mut cas = ptr::null_mut();
-            let config = br#"{"account":"","password":""}"#;
+            let config = br#"{"account":"","password":"","deviceId":"test-device"}"#;
             // SAFETY: Inputs and output slots are live; handles are released by Drop.
             unsafe {
                 assert_eq!(
@@ -473,7 +473,11 @@ mod tests {
     #[test]
     fn unknown_methods_report_a_typed_status() {
         let fixture = Fixture::new();
-        let (status, error) = call_cas(fixture.cas, c"no_such_method", b"");
+        let (status, error) = call_cas(
+            fixture.cas,
+            c"set_device",
+            br#"{"deviceId":"other-device"}"#,
+        );
         assert_eq!(status, ZZU_UNKNOWN_METHOD);
         assert_eq!(error["status"], json!(ZZU_UNKNOWN_METHOD));
     }
@@ -727,28 +731,38 @@ mod tests {
         assert_eq!(take_payload(error)["status"], json!(ZZU_INVALID_INPUT));
 
         let fixture = Fixture::new();
-        let mut cas = ptr::null_mut();
-        let config = br#"{"acount":"typo"}"#;
-        // SAFETY: Inputs and output slots are live; the error buffer is consumed once.
-        unsafe {
-            assert_eq!(
+        for (config, expected_message) in [
+            (r#"{"acount":"typo"}"#, "acount"),
+            (r#"{"account":"","password":""}"#, "deviceId"),
+            (r#"{"account":"","password":"","deviceId":""}"#, "设备 ID"),
+            (
+                r#"{"account":"","password":"","deviceId":" \t"}"#,
+                "设备 ID",
+            ),
+        ] {
+            let mut cas = ptr::null_mut();
+            let mut error = ptr::null_mut();
+            // SAFETY: Inputs and output slots are live; the error buffer is consumed once.
+            let status = unsafe {
                 zzu_cas_new(
                     fixture.runtime,
                     config.as_ptr(),
                     config.len(),
                     &raw mut cas,
-                    &raw mut error
-                ),
-                ZZU_INVALID_INPUT
-            );
+                    &raw mut error,
+                )
+            };
+            assert_eq!(status, ZZU_INVALID_INPUT);
             assert!(cas.is_null());
+            let error = take_payload(error);
+            assert_eq!(error["status"], json!(ZZU_INVALID_INPUT));
+            assert!(
+                error["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(expected_message)
+            );
         }
-        assert!(
-            take_payload(error)["message"]
-                .as_str()
-                .unwrap()
-                .contains("acount")
-        );
     }
 
     #[test]
