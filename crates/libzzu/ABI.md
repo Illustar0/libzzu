@@ -251,7 +251,7 @@ zzu_runtime_free(runtime);
 
 | 方法名 | 参数 JSON 字段 | 结果 JSON 类型 | 行为说明 |
 | --- | --- | --- | --- |
-| `login` | 无 | `null` | 登录 CAS 会话；已缓存可复用令牌时直接激活而不发网络请求。若需多因素认证则返回 `ZZU_AUTHENTICATION_ERROR`（`kind: "mfa_required"`），完成 `send_sms` 与 `verify_sms` 后再次调用 `login` 即可 |
+| `login` | 无 | `null` | 登录 CAS 会话；已缓存可复用令牌时直接激活，不发起网络请求。若需多因素认证，返回 `ZZU_AUTHENTICATION_ERROR`（`kind: "mfa_required"`）。可先调用 `prepare_sms` 预览脱敏手机号，再依次调用 `send_sms`、`verify_sms` 与 `login` |
 | `reauthenticate` | 无 | `null` | 清除本地缓存的令牌与 MFA 状态，强制重新执行完整密码认证 |
 | `logout` | 无 | `null` | 清空本地令牌、MFA 状态与登录标记；共享该会话的教务与校园卡客户端在下次读取 CAS 令牌时将收到 `not_authenticated` |
 | `is_logged_in` | 无 | `boolean` | 返回当前 CAS 会话是否处于已登录状态 |
@@ -259,9 +259,10 @@ zzu_runtime_free(runtime);
 | `tokens` | 无 | `{"userToken": string, "refreshToken": string} \| null` | 读取当前缓存的令牌对；未设置且未登录时返回 `null` |
 | `user_token` | 无 | `string` | 本地校验并返回可用的 `userToken`；未登录返回 `not_authenticated`，剩余有效期不足 15 分钟或 `refreshToken` 已过期返回 `token_expired` |
 | `set_device` | `deviceId: string` | `null` | 设置登录与 MFA 检测时上报的设备标识（默认 `"libzzu"`，不得为空字符串），同时重置未完成的 MFA 状态 |
-| `detect_mfa` | 无 | `{"isRequired": boolean, "canUseSms": boolean, "isVerified": boolean}` | 向服务端探测当前账号与设备是否需要 MFA 及是否支持安全手机短信验证 |
-| `send_sms` | 无 | `null` | 向绑定安全手机发送短信验证码（未探测过 MFA 时自动先探测；无需 MFA 或不支持短信时返回 `invalid_mfa_state`） |
-| `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验（未先调用 `send_sms` 返回 `invalid_mfa_state`，验证码错误返回 `mfa_verification_failed`）；通过后须再次调用 `login` |
+| `detect_mfa` | 无 | `{"isRequired": boolean, "canUseSms": boolean, "isVerified": boolean}` | 向服务端探测当前账号与设备是否需要 MFA 以及是否支持短信验证；每次调用都会重置未完成的 MFA 状态 |
+| `prepare_sms` | 无 | `{"securePhone": string \| null}` | 初始化短信 MFA 会话并返回脱敏手机号，不发送短信。未探测 MFA 时会先自动探测；同一轮验证内重复调用直接返回缓存结果。无需 MFA 或不支持短信时返回 `invalid_mfa_state`；收到服务端拒绝或无效响应时自动清空 MFA 状态 |
+| `send_sms` | 无 | `{"securePhone": string \| null}` | 向绑定安全手机发送短信验证码并返回脱敏手机号。未探测或未初始化时会自动完成 `prepare_sms`；无需 MFA 或不支持短信时返回 `invalid_mfa_state`。发送失败时会保留当前 MFA 会话，避免作废已发验证码；若状态已过期，可调用 `detect_mfa` 重置 |
+| `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验，通过后须再次调用 `login`。未先调用 `send_sms` 时返回 `invalid_mfa_state`；验证码错误返回 `mfa_verification_failed`，并保留当前会话供直接重试；服务端返回非 2xx 或业务失败时自动清空 MFA 状态 |
 | `set_device_trust` | `deviceId: string`、`isTrusted: boolean` | `null` | 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）（需已登录，`deviceId` 不得为空）。`true` 表示信任，`false` 表示取消信任 |
 | `user_info` | 无 | `PersonalInfo` | 查询个人身份信息、未读邮件数、校园卡余额与科研计数（需已登录） |
 | `service_login_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或用户令牌，不得写入日志） |

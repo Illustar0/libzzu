@@ -80,10 +80,8 @@ impl ClientService for CasClient {
                 done()
             }
             "detect_mfa" => reply(&self.detect_mfa().await?),
-            "send_sms" => {
-                self.send_sms().await?;
-                done()
-            }
+            "prepare_sms" => reply(&self.prepare_sms().await?),
+            "send_sms" => reply(&self.send_sms().await?),
             "verify_sms" => {
                 let VerifySms { code } = parse(params)?;
                 self.verify_sms(&code).await?;

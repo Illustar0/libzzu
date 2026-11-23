@@ -131,7 +131,7 @@ impl Tokens {
 }
 
 /// 当前会话的多因素认证（MFA）检测与校验状态。
-#[derive(Clone, Copy, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MfaStatus {
     /// 当前设备与账号登录是否需要多因素认证。
@@ -142,12 +142,30 @@ pub struct MfaStatus {
     pub is_verified: bool,
 }
 
+/// 短信多因素认证的发送上下文。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmsChallenge {
+    /// 服务端返回的脱敏安全手机号；服务端未提供时为 `None`。
+    pub secure_phone: Option<String>,
+}
+
 #[derive(Default)]
 struct MfaState {
     state: String,
     gid: String,
+    secure_phone: Option<String>,
     attest_url: String,
+    is_sms_sent: bool,
     status: MfaStatus,
+}
+
+impl MfaState {
+    fn sms_challenge(&self) -> SmsChallenge {
+        SmsChallenge {
+            secure_phone: self.secure_phone.clone(),
+        }
+    }
 }
 
 struct Session {
@@ -258,10 +276,11 @@ impl CasClient {
     ///
     /// 若已缓存距离过期超过 15 分钟的 `user_token` 且 `refresh_token` 未过期，则直接复用现有令牌；
     /// 否则自动检测 MFA 状态、获取服务端 RSA 公钥并发起密码登录。
+    /// 若密码登录收到服务端拒绝或无效响应，会自动清空当前 MFA 状态；网络传输失败时保留已验证状态，便于重试。
     ///
     /// # Errors
     ///
-    /// - 服务端要求多因素认证且尚未通过校验时，返回 [`AuthenticationErrorKind::MfaRequired`]；调用方须依次调用 [`Self::send_sms`]、[`Self::verify_sms`]，再重新调用 [`Self::login`]。
+    /// - 服务端要求多因素认证且尚未通过校验时，返回 [`AuthenticationErrorKind::MfaRequired`]。可先调用 [`Self::prepare_sms`] 预览脱敏手机号，再依次调用 [`Self::send_sms`]、[`Self::verify_sms`] 与 [`Self::login`]。
     /// - 账号或密码错误时，返回 [`AuthenticationErrorKind::InvalidCredentials`]。
     /// - 网络传输失败、公钥或响应解析失败、RSA 加密失败，或服务端签发的令牌已过期时返回错误。
     pub async fn login(&self) -> Result<()> {
@@ -330,7 +349,7 @@ impl CasClient {
             client_id: "",
             mfa_state: &session.mfa.state,
         };
-        let response = http::json(
+        let response = match http::json(
             self.inner
                 .http
                 .post(format!("{CAS_URL}/token/password/passwordLogin"))
@@ -338,12 +357,27 @@ impl CasClient {
                 .query(&query),
         )
         .await
-        .map_err(password_login_error)?;
+        {
+            Ok(response) => response,
+            Err(error) => {
+                if !error.is_transport() {
+                    session.mfa = MfaState::default();
+                }
+                return Err(password_login_error(error));
+            }
+        };
         let context = response.context.clone();
-        let tokens: Tokens = http::data(response, "code").map_err(password_login_error)?;
-        tokens
-            .validate()
-            .map_err(|error| error.with_request(context))?;
+        let tokens: Tokens = match http::data(response, "code") {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                session.mfa = MfaState::default();
+                return Err(password_login_error(error));
+            }
+        };
+        if let Err(error) = tokens.validate() {
+            session.mfa = MfaState::default();
+            return Err(error.with_request(context));
+        }
         session.tokens = Some(tokens);
         session.is_logged_in = true;
         session.mfa = MfaState::default();
@@ -370,6 +404,8 @@ impl CasClient {
     }
 
     /// 向服务端探测当前账号与设备是否需要多因素认证，并更新内部 MFA 状态。
+    ///
+    /// 每次调用都会重置未完成的 MFA 状态，可在会话过期后用于重新开启一轮验证。
     ///
     /// # Errors
     ///
@@ -427,53 +463,94 @@ impl CasClient {
         Ok(())
     }
 
-    /// 初始化短信 MFA 并请求服务端向绑定手机发送验证码。
+    /// 初始化短信 MFA 会话并返回发送上下文（含脱敏安全手机号），不发送短信。
     ///
-    /// 若尚未探测 MFA 状态，会先自动探测。
+    /// 该步骤可选，适合先在界面展示脱敏手机号，再调用 [`Self::send_sms`]。
+    /// 若尚未探测 MFA 状态，会先自动探测；同一轮验证内重复调用直接返回已缓存的上下文。
     ///
     /// # Errors
     ///
     /// - 会话无需 MFA 或不支持短信验证时，返回 [`AuthenticationErrorKind::InvalidMfaState`]。
-    /// - MFA 初始化或短信发送请求失败时返回错误。
-    pub async fn send_sms(&self) -> Result<()> {
+    /// - 探测或初始化请求失败时返回错误；若收到服务端拒绝或无效响应，会自动清空 MFA 状态。
+    pub async fn prepare_sms(&self) -> Result<SmsChallenge> {
         let mut session = self.inner.session.lock().await;
+        self.prepare_sms_session(&mut session).await
+    }
+
+    async fn prepare_sms_session(&self, session: &mut Session) -> Result<SmsChallenge> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Initialization {
+            gid: String,
+            #[serde(default)]
+            secure_phone: Option<String>,
+            #[serde(default)]
+            attest_server_url: Option<String>,
+        }
         if session.mfa.state.is_empty() {
-            self.detect_mfa_session(&mut session).await?;
+            self.detect_mfa_session(session).await?;
         }
         if !session.mfa.status.is_required || !session.mfa.status.can_use_sms {
             return Err(Error::invalid_mfa_state(
                 "当前会话不支持或不需要短信 MFA".into(),
             ));
         }
-        if session.mfa.gid.is_empty() {
-            #[derive(Deserialize)]
-            #[serde(rename_all = "camelCase")]
-            struct Initialization {
-                gid: String,
-                #[serde(default)]
-                attest_server_url: Option<String>,
-            }
-            let request = self
-                .inner
-                .http
-                .get(format!("{CAS_URL}/token/mfa/initByType/securephone"))
-                .header("User-Agent", APP_AGENT)
-                .query(&[("state", &session.mfa.state)]);
-            let response = http::json(request)
-                .await
-                .map_err(unknown_authentication_error)?;
-            let context = response.context.clone();
-            let initialized: Initialization =
-                http::data(response, "code").map_err(unknown_authentication_error)?;
-            if initialized.gid.is_empty() {
-                return Err(Error::decode_message("MFA gid 为空".into()).with_request(context));
-            }
-            session.mfa.gid = initialized.gid;
-            session.mfa.attest_url = initialized
-                .attest_server_url
-                .filter(|url| !url.is_empty())
-                .unwrap_or_else(|| format!("{CAS_URL}/attest"));
+        if !session.mfa.gid.is_empty() {
+            return Ok(session.mfa.sms_challenge());
         }
+        let request = self
+            .inner
+            .http
+            .get(format!("{CAS_URL}/token/mfa/initByType/securephone"))
+            .header("User-Agent", APP_AGENT)
+            .query(&[("state", &session.mfa.state)]);
+        let response = match http::json(request).await {
+            Ok(response) => response,
+            Err(error) => {
+                if !error.is_transport() {
+                    session.mfa = MfaState::default();
+                }
+                return Err(unknown_authentication_error(error));
+            }
+        };
+        let context = response.context.clone();
+        let initialized: Initialization = match http::data(response, "code") {
+            Ok(initialized) => initialized,
+            Err(error) => {
+                session.mfa = MfaState::default();
+                return Err(unknown_authentication_error(error));
+            }
+        };
+        if initialized.gid.trim().is_empty() {
+            session.mfa = MfaState::default();
+            return Err(Error::decode_message("MFA gid 为空".into()).with_request(context));
+        }
+        session.mfa.gid = initialized.gid;
+        session.mfa.secure_phone = initialized
+            .secure_phone
+            .map(|phone| phone.trim().to_owned())
+            .filter(|phone| !phone.is_empty());
+        session.mfa.attest_url = initialized
+            .attest_server_url
+            .map(|url| url.trim().to_owned())
+            .filter(|url| !url.is_empty())
+            .unwrap_or_else(|| format!("{CAS_URL}/attest"));
+        Ok(session.mfa.sms_challenge())
+    }
+
+    /// 请求服务端向绑定安全手机发送短信验证码，并返回发送上下文（含脱敏安全手机号）。
+    ///
+    /// 若尚未探测或初始化短信 MFA 会话，会先自动完成 [`Self::prepare_sms`]。
+    /// 短信发送失败时（如触发频控冷却）会保留当前 MFA 会话，避免作废此前已发出的验证码；
+    /// 若状态已过期，可调用 [`Self::detect_mfa`] 重开一轮验证。
+    ///
+    /// # Errors
+    ///
+    /// - 会话无需 MFA 或不支持短信验证时，返回 [`AuthenticationErrorKind::InvalidMfaState`]。
+    /// - MFA 初始化或短信发送请求失败时返回错误。
+    pub async fn send_sms(&self) -> Result<SmsChallenge> {
+        let mut session = self.inner.session.lock().await;
+        let challenge = self.prepare_sms_session(&mut session).await?;
         let url = format!(
             "{}/api/guard/securephone/send",
             session.mfa.attest_url.trim_end_matches('/')
@@ -488,20 +565,23 @@ impl CasClient {
             .await
             .map_err(unknown_authentication_error)?;
         let _: SmsResult = http::data(response, "code").map_err(unknown_authentication_error)?;
+        session.mfa.is_sms_sent = true;
         session.mfa.status.is_verified = false;
-        Ok(())
+        Ok(challenge)
     }
 
     /// 校验短信验证码以完成多因素认证。
     ///
     /// 校验通过后须再次调用 [`Self::login`] 完成令牌签发。
+    /// 验证码不匹配时会保留当前 MFA 会话，可直接重试；若服务端返回非 2xx 或业务失败
+    /// （如验证会话已过期），会自动清空 MFA 状态。
     ///
     /// # Errors
     ///
     /// - `code` 为空字符串时返回 [`Error::InvalidInput`]。
-    /// - 尚未调用 [`Self::send_sms`] 初始化短信会话时，返回 [`AuthenticationErrorKind::InvalidMfaState`]。
+    /// - 尚未调用 [`Self::send_sms`] 发送短信验证码时，返回 [`AuthenticationErrorKind::InvalidMfaState`]。
     /// - 验证码不匹配或校验未通过时，返回 [`AuthenticationErrorKind::MfaVerificationFailed`]。
-    /// - 网络传输失败或响应解析失败时返回错误。
+    /// - 网络传输失败、服务端拒绝或响应解析失败时返回错误。
     pub async fn verify_sms(&self, code: &str) -> Result<()> {
         #[derive(Deserialize)]
         struct Verification {
@@ -513,7 +593,7 @@ impl CasClient {
             return Err(Error::invalid_input("短信验证码不能为空".into()));
         }
         let mut session = self.inner.session.lock().await;
-        if session.mfa.gid.is_empty() {
+        if session.mfa.gid.is_empty() || !session.mfa.is_sms_sent {
             return Err(Error::invalid_mfa_state("请先发送短信验证码".into()));
         }
         session.mfa.status.is_verified = false;
@@ -527,12 +607,25 @@ impl CasClient {
             .post(url)
             .header("User-Agent", APP_AGENT)
             .json(&json!({"gid": session.mfa.gid, "code": code}));
-        let response = http::json(request)
-            .await
-            .map_err(unknown_authentication_error)?;
+        let response = match http::json(request).await {
+            Ok(response) => response,
+            Err(error) => {
+                if error.is_http() {
+                    session.mfa = MfaState::default();
+                }
+                return Err(unknown_authentication_error(error));
+            }
+        };
         let context = response.context.clone();
-        let verification: Verification =
-            http::data(response, "code").map_err(unknown_authentication_error)?;
+        let verification: Verification = match http::data(response, "code") {
+            Ok(verification) => verification,
+            Err(error) => {
+                if error.is_remote() {
+                    session.mfa = MfaState::default();
+                }
+                return Err(unknown_authentication_error(error));
+            }
+        };
         if verification.status != 2 {
             return Err(Error::authentication(
                 AuthenticationErrorKind::MfaVerificationFailed,
