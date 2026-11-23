@@ -2,7 +2,10 @@ use std::ffi::{c_char, c_void};
 
 use jiff::civil::Date;
 use serde::Deserialize;
-use zzu::eas::{TeachingWeeks as Timetable, UndergradEasClient};
+use zzu::eas::{
+    ClassroomFetchOptions, ClassroomQuery, DEFAULT_CLASSROOM_CONCURRENCY,
+    DEFAULT_CLASSROOM_PAGE_SIZE, TeachingWeeks as Timetable, UndergradEasClient,
+};
 
 use super::{Guarded, ZzuCasClient, done, parse, reply};
 use crate::{
@@ -34,6 +37,50 @@ struct WeekIndex {
     date: Date,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClassroomOccupanciesPage {
+    date: Date,
+    #[serde(default)]
+    campus_id: Option<i64>,
+    #[serde(default)]
+    building_ids: Vec<i64>,
+    #[serde(default)]
+    room_type_ids: Vec<i64>,
+    #[serde(default)]
+    floors: Vec<i32>,
+    #[serde(default)]
+    min_seats: Option<u32>,
+    #[serde(default)]
+    max_seats: Option<u32>,
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClassroomOccupancies {
+    date: Date,
+    #[serde(default)]
+    campus_id: Option<i64>,
+    #[serde(default)]
+    building_ids: Vec<i64>,
+    #[serde(default)]
+    room_type_ids: Vec<i64>,
+    #[serde(default)]
+    floors: Vec<i32>,
+    #[serde(default)]
+    min_seats: Option<u32>,
+    #[serde(default)]
+    max_seats: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+    #[serde(default)]
+    concurrency: Option<usize>,
+}
+
 impl Service for Guarded<UndergradEasClient> {
     async fn call(&self, method: &str, params: &[u8]) -> FfiResult<Vec<u8>> {
         match method {
@@ -59,6 +106,50 @@ impl Service for Guarded<UndergradEasClient> {
             "week_index" => {
                 let WeekIndex { date } = parse(params)?;
                 reply(&self.read().await?.week_index(date).await?)
+            }
+            "classroom_catalog" => reply(&self.read().await?.classroom_catalog().await?),
+            "classroom_occupancies_page" => {
+                let args: ClassroomOccupanciesPage = parse(params)?;
+                let query = ClassroomQuery {
+                    date: args.date,
+                    campus_id: args.campus_id,
+                    building_ids: args.building_ids,
+                    room_type_ids: args.room_type_ids,
+                    floors: args.floors,
+                    min_seats: args.min_seats,
+                    max_seats: args.max_seats,
+                };
+                let page = args.page.unwrap_or(1);
+                reply(
+                    &self
+                        .read()
+                        .await?
+                        .classroom_occupancies_page(&query, page, args.page_size)
+                        .await?,
+                )
+            }
+            "classroom_occupancies" => {
+                let args: ClassroomOccupancies = parse(params)?;
+                let query = ClassroomQuery {
+                    date: args.date,
+                    campus_id: args.campus_id,
+                    building_ids: args.building_ids,
+                    room_type_ids: args.room_type_ids,
+                    floors: args.floors,
+                    min_seats: args.min_seats,
+                    max_seats: args.max_seats,
+                };
+                let options = ClassroomFetchOptions {
+                    page_size: args.page_size.unwrap_or(DEFAULT_CLASSROOM_PAGE_SIZE),
+                    concurrency: args.concurrency.unwrap_or(DEFAULT_CLASSROOM_CONCURRENCY),
+                };
+                reply(
+                    &self
+                        .read()
+                        .await?
+                        .classroom_occupancies(&query, options)
+                        .await?,
+                )
             }
             _ => Err(FfiError::UnknownMethod(method.into())),
         }

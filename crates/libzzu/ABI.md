@@ -30,7 +30,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | 缓冲区 | `zzu_buffer_data`、`zzu_buffer_len`、`zzu_buffer_free` | 读取与释放本库分配的字节缓冲区 |
 | 运行时 | `zzu_runtime_new`、`zzu_runtime_free` | 创建与释放后台异步运行时（通常每进程一个） |
 | CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、个人信息与业务系统单点登录 |
-| 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历与教学周课表查询 |
+| 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、教学周课表与教室占用查询 |
 | 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、宿舍电费查询与充值、校园卡充值下单 |
 | Portal 探测 | `zzu_portal_discover`、`zzu_portal_discover_blocking` | 自动探测当前网络下的校园网 Portal 地址与本机内网 IP |
 | Portal 客户端 | `zzu_portal_new`、`zzu_portal_free`、`zzu_portal_call`、`zzu_portal_call_blocking` | 校园网 `eportal` 终端上线认证 |
@@ -133,7 +133,7 @@ zzu_runtime_free(runtime);
 
 - **线程安全与读写并发**：所有导出函数均支持多线程并发调用。各客户端按状态可变性采用不同的内部同步策略：
   - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
-    - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`teaching_weeks`、`teaching_week`、`week_index`）共享读锁并发执行。
+    - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`teaching_weeks`、`teaching_week`、`week_index`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
     - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话与默认房间缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
   - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_login_url` 在读取令牌并释放会话锁后并发执行网络请求。
@@ -303,8 +303,11 @@ zzu_runtime_free(runtime);
 | `teaching_weeks` | `semesterId?: integer` | `TeachingWeek[]` | 查询指定学期（省略时取当前学期）按校历排列的全部教学周课表；`semesterId` 不存在时返回 `ZZU_NOT_FOUND` |
 | `teaching_week` | `week: integer`、`semesterId?: integer` | `TeachingWeek` | 按教学周序号查询单周课表；`week` 从 `1` 开始，对应 `TeachingWeek.weekIndex`（非数组下标），为 `0` 或不在学期内时返回 `ZZU_INVALID_INPUT` |
 | `week_index` | `date: "YYYY-MM-DD"` | `integer \| null` | 查询指定公历日期所属的教学周序号（正整数），假期等非教学周返回 `null`。内部自动换算为该周周一查询，以规避上游接口在秋季学期跨年后周二至周日周次少 1 的缺陷；结果按该日期实际所在学期计算 |
+| `classroom_catalog` | 无 | `ClassroomCatalog` | 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型与楼层），返回扁平列表供前端渲染筛选项及按 `buildingId` 反查教学楼信息 |
+| `classroom_occupancies_page` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`page?: uint32`、`pageSize?: uint32` | `ClassroomPage` | 按页查询符合筛选条件的教室及当日占用记录。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `44`；`page == 0`、`pageSize == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。**性能警告**：上游 API 存在极其严重的性能问题，响应耗时随 `pageSize` 增大而非线性增大（`100` 约 1 秒以上，`1000` 约 25 秒以上），`44` 左右通常是单条均摊耗时最低的甜点值；不清楚后端特性时请保持默认，高占用率校区可酌情调小以降低单页尾延迟 |
+| `classroom_occupancies` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`pageSize?: uint32`、`concurrency?: uint64` | `ClassroomOccupancy[]` | 先以 `pageSize`（默认 `44`）拉取第 1 页获知总页数，再以 `concurrency`（默认 `8`）为并发上限并发拉取剩余分页，按页序合并并按教室 `id` 去重（任一页失败立即中止并返回错误）。`pageSize == 0`、`concurrency == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。不带空间筛选的整校查询（约 1658 间教室）在高占用时段可能接近默认 `15000` 毫秒时限，建议配合校区/教学楼筛选、放宽 `timeoutMs`，或在需要进度条与单页容错时改用 `classroom_occupancies_page` |
 
-教务数据模型（`Semester`、`Course`、`PeriodInfo`、`Schedule`、`Room` 还会原样透传上游返回的未建模扩展字段）：
+教务数据模型（`Semester`、`Course`、`PeriodInfo`、`Schedule`、`Room`、`Campus`、`Building`、`RoomType`、`ClassroomOccupancy`、`RoomOccupation` 还会原样透传上游返回的未建模扩展字段）：
 
 | 类型 | JSON 字段与类型 | 说明 |
 | --- | --- | --- |
@@ -316,6 +319,13 @@ zzu_runtime_free(runtime);
 | `Schedule` | `scheduleGroupId: int64`、`date: "YYYY-MM-DD"`、`weekday: uint8`（`1..=7`）、`startTime: string`、`endTime: string`、`realStartTime: string`、`realEndTime: string`、`teacherName: string`、`teacherNameEn: string \| null`、`customPlace: string \| null`、`room: Room \| null`、`startUnit: uint8`（`1..=10`）、`endUnit: uint8`（`1..=10`）、`state: string \| null`、`weekIndex: uint32`、`lessonType: string \| null`、`periods: uint32 \| null` | 单次排课详情；四个时间字段均为 `Asia/Shanghai` 时区的 RFC 9557 字符串，未单独指定实际时间时 `realStartTime`、`realEndTime` 与标准起止时间一致；实验课的 `state`、`lessonType`、`periods` 为 `null` |
 | `Room` | `id: int64`、`nameZh: string`、`nameEn: string \| null`、`building: NamedEntity`、`campus: NamedEntity` | 上课教室及其所属教学楼与校区 |
 | `NamedEntity` | `id: int64`、`nameZh: string`、`nameEn: string \| null`、`code: string` | 通用教务命名实体 |
+| `ClassroomCatalog` | `campuses: Campus[]`、`buildings: Building[]`、`roomTypes: RoomType[]`、`floors: int32[]` | 教室占用筛选参照目录快照 |
+| `Campus` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`remark: string \| null`、`enabled: boolean` | 校区元数据 |
+| `Building` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`campusId: int64`、`remark: string \| null`、`enabled: boolean` | 教学楼元数据；`campusId` 映射自上游 `campusAssoc`（可能指向未出现在 `campuses` 中的默认校区 ID） |
+| `RoomType` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`enabled: boolean` | 教室类型元数据 |
+| `ClassroomPage` | `items: ClassroomOccupancy[]`、`page: uint32`、`pageSize: uint32`、`totalItems: uint32`、`totalPages: uint32` | 单页教室占用查询结果；`pageSize` 为本次实际使用的页大小，SDK 不应假定其恒为 `44` |
+| `ClassroomOccupancy` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`buildingId: int64`、`campusNameZh: string`、`occupations: RoomOccupation[]` | 教室信息与当日占用列表（无占用时为空数组）；上游未回填的 `floor`、`seatsForLesson`、`enabled`、`virtual`、`experiment`（恒为 `0`/`false`）保留在透传扩展字段中 |
+| `RoomOccupation` | `activityId: int64 \| null`、`activityType: string`、`activityName: string`、`activityNameEn: string \| null`、`date: "YYYY-MM-DD"`、`startTime: string`、`endTime: string`、`teacherName: string`、`teacherNameEn: string \| null` | 单条教室占用记录；`startTime`、`endTime` 为 `Asia/Shanghai` 时区的 RFC 9557 字符串（左闭右开区间 `[startTime, endTime)`）；`activityType` 已知取值为 `"lesson"`、`"experiment"`、`"room_borrow"`，封装层须容忍上游新增的其他字符串取值 |
 
 ### `ZzuEcardClient`（校园卡与电控）
 

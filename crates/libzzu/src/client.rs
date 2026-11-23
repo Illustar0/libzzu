@@ -737,4 +737,61 @@ mod tests {
             );
         });
     }
+
+    #[test]
+    fn eas_classroom_methods_validate_params_and_auth_state() {
+        let fixture = Fixture::new();
+        let eas = fixture.eas();
+
+        let (status, error) = call_async(zzu_eas_call, eas, c"classroom_catalog", b"");
+        assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
+        assert_eq!(error["kind"], "not_authenticated");
+
+        // 未知字段应立即返回 ZZU_INVALID_INPUT（严进宽出）。
+        let (status, _) = call_async(
+            zzu_eas_call,
+            eas,
+            c"classroom_occupancies_page",
+            br#"{"date":"2026-11-23","campusAssoc":2}"#,
+        );
+        assert_eq!(status, ZZU_INVALID_INPUT);
+
+        // 非法页码、每页条数、座位数区间与并发度均应返回 ZZU_INVALID_INPUT。
+        for (method, payload) in [
+            (
+                c"classroom_occupancies_page",
+                br#"{"date":"2026-11-23","page":0}"#.as_slice(),
+            ),
+            (
+                c"classroom_occupancies_page",
+                br#"{"date":"2026-11-23","pageSize":0}"#.as_slice(),
+            ),
+            (
+                c"classroom_occupancies_page",
+                br#"{"date":"2026-11-23","minSeats":80,"maxSeats":40}"#.as_slice(),
+            ),
+            (
+                c"classroom_occupancies",
+                br#"{"date":"2026-11-23","concurrency":0}"#.as_slice(),
+            ),
+            (
+                c"classroom_occupancies",
+                br#"{"date":"2026-11-23","pageSize":0}"#.as_slice(),
+            ),
+        ] {
+            let (status, _) = call_async(zzu_eas_call, eas, method, payload);
+            assert_eq!(status, ZZU_INVALID_INPUT);
+        }
+
+        // 合法参数在未登录时应进入教务客户端鉴权并返回 not_authenticated。
+        for method in [c"classroom_occupancies_page", c"classroom_occupancies"] {
+            let (status, error) =
+                call_async(zzu_eas_call, eas, method, br#"{"date":"2026-11-23"}"#);
+            assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
+            assert_eq!(error["kind"], "not_authenticated");
+        }
+
+        // SAFETY: Handle came from Fixture::eas and is released once.
+        unsafe { zzu_eas_free(eas) };
+    }
 }

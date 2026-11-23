@@ -249,7 +249,7 @@ impl TryFrom<RawSchedule> for Schedule {
     }
 }
 
-fn parse_time(date: Date, value: &Value) -> Result<Zoned> {
+pub(super) fn parse_time(date: Date, value: &Value) -> Result<Zoned> {
     let text = match value {
         Value::String(text) => text.trim().to_owned(),
         Value::Number(number) => number.to_string(),
