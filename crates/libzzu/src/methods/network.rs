@@ -104,6 +104,7 @@ impl Service for PortalClient {
                 let auth = self.login(&account, &password, encryption).await?;
                 reply(&PortalAuth::from(auth))
             }
+            "isps" => reply(&self.isps().await?),
             _ => Err(FfiError::UnknownMethod(method.into())),
         }
     }

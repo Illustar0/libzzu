@@ -353,9 +353,12 @@ zzu_runtime_free(runtime);
 
 | 方法名 | 参数 JSON 字段 | 结果 JSON 类型 | 行为说明 |
 | --- | --- | --- | --- |
-| `login` | `account: string`、`password: string`、`encryption?: "plain" \| "xor"` | `PortalAuth` | 向校园网 `eportal` 发起终端上线认证；`encryption` 默认 `"plain"`，选 `"xor"` 时待编码字段不得超过 512 个字符。融合宽带账号须在 `account` 后自行附带运营商后缀（如 `@cmcc`、`@unicom`、`@telecom`） |
+| `login` | `account: string`、`password: string`、`encryption?: "plain" \| "xor"` | `PortalAuth` | 向校园网 `eportal` 发起终端上线认证；`encryption` 默认 `"plain"`，选 `"xor"` 时待编码字段不得超过 512 个字符。融合宽带账号须在 `account` 后自行附带运营商后缀（如 `@cmcc`、`@unicom`、`@telecom`，可通过 `isps` 查询） |
+| `isps` | 无 | `IspInfo[]` | 查询当前校园网 Portal 页面提供的运营商列表及其登录账号后缀；若门户页面模板不含运营商选项则返回空数组 `[]` |
 
 `PortalAuth` 结构为 `{"isSuccess": boolean, "result": int64, "message": string, "retCode": int64 | null}`。注意：只要 HTTP 请求与 JSONP 报文正常解析，本调用即返回 `ZZU_OK`；终端认证是否通过须检查结果中的 **`isSuccess`**（即 `result == 1`）。
+
+`IspInfo` 结构为 `{"name": string, "suffix": string}`，其中 `name` 为运营商显示名称，`suffix` 为附在登录账号后的运营商后缀（普通校园网通常为空字符串 `""`）。
 
 ### `ZzuSelfServiceClient`（校园网自助服务）
 

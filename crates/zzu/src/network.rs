@@ -178,6 +178,16 @@ fn portal_server_url(auth_url: &Url, script: Option<&str>) -> Result<Url> {
     Ok(url)
 }
 
+/// 校园网 Portal 提供的运营商选项信息。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IspInfo {
+    /// 运营商显示名称（如“校园网”“中国移动”）。
+    pub name: String,
+    /// 附加在登录账号后的运营商后缀（如 `"@cmcc"`，普通校园网通常为空字符串 `""`）。
+    pub suffix: String,
+}
+
 /// Portal 登录请求参数的编码方式。
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -286,7 +296,7 @@ impl PortalClient {
 
     /// 向校园网 Portal 服务器发起终端上线认证请求。
     ///
-    /// 融合宽带用户需在 `account` 后自行附带对应的运营商后缀（如中国移动 `@cmcc`、中国联通 `@unicom`、中国电信 `@telecom`）；普通校园网账号直接传入学号或工号即可。
+    /// 融合宽带用户需在 `account` 后自行附带对应的运营商后缀（如中国移动 `@cmcc`、中国联通 `@unicom`、中国电信 `@telecom`，可通过 [`Self::isps`] 查询）；普通校园网账号直接传入学号或工号即可。
     ///
     /// # Errors
     ///
@@ -345,6 +355,67 @@ impl PortalClient {
         let response = http::send(request).await?.require_success()?;
         parse_jsonp(response.body()).map_err(|error| error.with_request(response.context))
     }
+
+    /// 查询当前校园网 Portal 页面提供的运营商列表及其登录账号后缀。
+    ///
+    /// 先请求 `loadConfig` 获取门户页面配置，再拉取对应 `hipad.js`（兼容 UTF-8 与 GBK 编码）并解析其中的运营商下拉选项。
+    /// 若门户页面模板不含 `bodyContent` 或运营商选择列表，返回空列表。
+    ///
+    /// # Errors
+    ///
+    /// 选择 [`PortalSourceAddress::UserIp`] 而 `user_ip` 无法绑定、网络传输失败、HTTP 状态非成功，
+    /// 或 `loadConfig` 返回的 JSONP 报文及页面配置字段无法解析时返回错误。
+    pub async fn isps(&self) -> Result<Vec<IspInfo>> {
+        let query = LoadConfigQuery {
+            callback: "dr1001",
+            wlan_user_ip: STANDARD.encode(self.user_ip.to_string()),
+            wlan_user_ipv6: "",
+            wlan_user_mac: "000000000000",
+            wlan_vlan_id: "0",
+            wlan_ac_ip: "",
+            wlan_ac_name: "",
+            js_version: "4.X",
+            terminal_type: "3",
+            lang: "zh",
+            v: rand::thread_rng().gen_range(500..=10499),
+        };
+        let config_url = self
+            .base_url
+            .join("/eportal/portal/page/loadConfig")
+            .map_err(|error| Error::invalid_input(error.to_string()))?;
+        let response = http::send(self.http.get(config_url).query(&query))
+            .await?
+            .require_success()?;
+        let config: LoadConfigResponse = parse_jsonp(response.body())
+            .map_err(|error| error.with_request(response.context.clone()))?;
+        if !is_valid_path_segment(&config.data.program_index)
+            || !is_valid_path_segment(&config.data.page_index)
+        {
+            return Err(
+                Error::decode_message("Portal 页面配置缺少有效的路径标识".into())
+                    .with_request(response.context),
+            );
+        }
+
+        let mut hipad_js_url = self
+            .base_url
+            .join("/eportal/extern")
+            .map_err(|error| Error::invalid_input(error.to_string()))?;
+        hipad_js_url
+            .path_segments_mut()
+            .map_err(|()| Error::decode_message("Portal 脚本地址无效".into()))?
+            .push(&config.data.program_index)
+            .push(&config.data.page_index)
+            .push("hipad.js");
+        let response =
+            http::send_with_text_decoder(self.http.get(hipad_js_url), async |response| {
+                let bytes = response.bytes().await?;
+                Ok(decode_portal_text(&bytes))
+            })
+            .await?
+            .require_success()?;
+        Ok(parse_isp_info(response.body()))
+    }
 }
 
 #[derive(Serialize)]
@@ -367,6 +438,74 @@ struct PortalLogin {
     #[serde(skip_serializing_if = "Option::is_none")]
     encrypt: Option<&'static str>,
     v: u32,
+}
+
+#[derive(Serialize)]
+struct LoadConfigQuery {
+    callback: &'static str,
+    wlan_user_ip: String,
+    wlan_user_ipv6: &'static str,
+    wlan_user_mac: &'static str,
+    wlan_vlan_id: &'static str,
+    wlan_ac_ip: &'static str,
+    wlan_ac_name: &'static str,
+    #[serde(rename = "jsVersion")]
+    js_version: &'static str,
+    terminal_type: &'static str,
+    lang: &'static str,
+    v: u32,
+}
+
+#[derive(Deserialize)]
+struct LoadConfigResponse {
+    data: LoadConfigData,
+}
+
+#[derive(Deserialize)]
+struct LoadConfigData {
+    program_index: String,
+    page_index: String,
+}
+
+fn is_valid_path_segment(segment: &str) -> bool {
+    !segment.is_empty() && !matches!(segment, "." | "..")
+}
+
+fn parse_isp_info(hipad_js_content: &str) -> Vec<IspInfo> {
+    static BODY_CONTENT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?s)var\s+bodyContent\s*=\s*'(.*?)'\s*;").expect("static JavaScript pattern")
+    });
+    static ISP_OPTION: LazyLock<Selector> = LazyLock::new(|| {
+        Selector::parse(r#"select[name="ISP_select"] option"#).expect("static HTML selector")
+    });
+
+    let Some(body_content) = BODY_CONTENT
+        .captures(hipad_js_content)
+        .and_then(|captures| captures.get(1))
+    else {
+        return Vec::new();
+    };
+
+    let document = Html::parse_document(body_content.as_str());
+    document
+        .select(&ISP_OPTION)
+        .filter_map(|element| {
+            let suffix = element.value().attr("value")?;
+            if suffix == "-1" {
+                return None;
+            }
+
+            let name = element.text().collect::<String>().trim().to_owned();
+            if name.is_empty() {
+                return None;
+            }
+
+            Some(IspInfo {
+                name,
+                suffix: suffix.to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn parse_jsonp<T: serde::de::DeserializeOwned>(text: &str) -> Result<T> {
@@ -742,5 +881,169 @@ mod tests {
         let mut bad_duration = raw;
         bad_duration["useTime"] = serde_json::json!("1h2m");
         assert!(serde_json::from_value::<OnlineDevice>(bad_duration).is_err());
+    }
+
+    #[test]
+    fn parse_isp_info_extracts_options_and_ignores_placeholders() {
+        let hipad_js = r#"
+            var other = 'ignored';
+            var bodyContent = '<form>
+                <select name="other_select"><option value="@ignored">忽略</option></select>
+                <select name="ISP_select">
+                    <option value="-1">请选择运营商</option>
+                    <option value=""> 校园网 </option>
+                    <option value="@cmcc">中国移动</option>
+                    <option value="@unicom"> 中国联通 &amp; 宽带 </option>
+                    <option value="@empty">   </option>
+                    <option>缺少属性</option>
+                </select>
+            </form>';
+        "#;
+        assert_eq!(
+            parse_isp_info(hipad_js),
+            vec![
+                IspInfo {
+                    name: "校园网".into(),
+                    suffix: String::new(),
+                },
+                IspInfo {
+                    name: "中国移动".into(),
+                    suffix: "@cmcc".into(),
+                },
+                IspInfo {
+                    name: "中国联通 & 宽带".into(),
+                    suffix: "@unicom".into(),
+                },
+            ]
+        );
+        assert_eq!(parse_isp_info("var other = 'no body';"), Vec::new());
+        assert_eq!(
+            parse_isp_info("var bodyContent = '<div>no select</div>';"),
+            Vec::new()
+        );
+    }
+
+    fn spawn_stub_http_server(
+        responses: Vec<(&'static str, Vec<u8>)>,
+    ) -> (SocketAddr, std::thread::JoinHandle<Vec<String>>) {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let mut requests = Vec::with_capacity(responses.len());
+            for (content_type, body) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buffer = [0_u8; 4096];
+                let mut read = 0;
+                while read < buffer.len() {
+                    let count = stream.read(&mut buffer[read..]).unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    read += count;
+                    if buffer[..read]
+                        .windows(4)
+                        .any(|window| window == b"\r\n\r\n")
+                    {
+                        break;
+                    }
+                }
+                let request_line = std::str::from_utf8(&buffer[..read])
+                    .unwrap()
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .to_owned();
+                requests.push(request_line);
+
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(header.as_bytes()).unwrap();
+                stream.write_all(&body).unwrap();
+            }
+            requests
+        });
+        (addr, handle)
+    }
+
+    #[tokio::test]
+    async fn portal_client_isps_loads_config_and_decodes_gbk_hipad_js() {
+        let gbk_script = GBK
+            .encode(
+                r#"var bodyContent = '<select name="ISP_select"><option value="-1">请选择</option><option value="">校园网</option><option value="@cmcc">中国移动</option></select>';"#,
+            )
+            .0
+            .into_owned();
+        let (addr, server) = spawn_stub_http_server(vec![
+            (
+                "application/javascript; charset=utf-8",
+                br#"dr1001({"data":{"program_index":"prog_1","page_index":"page_2"}});"#.to_vec(),
+            ),
+            ("application/javascript", gbk_script),
+        ]);
+
+        let client = PortalClient::with_http_client(
+            &format!("http://{addr}"),
+            "10.171.51.216".parse().unwrap(),
+            Client::new(),
+        )
+        .unwrap();
+        let isps = client.isps().await.unwrap();
+        assert_eq!(
+            isps,
+            vec![
+                IspInfo {
+                    name: "校园网".into(),
+                    suffix: String::new(),
+                },
+                IspInfo {
+                    name: "中国移动".into(),
+                    suffix: "@cmcc".into(),
+                },
+            ]
+        );
+
+        let requests = server.join().unwrap();
+        let config_target = requests[0].split_whitespace().nth(1).unwrap();
+        let config_url = Url::parse(&format!("http://stub{config_target}")).unwrap();
+        assert_eq!(config_url.path(), "/eportal/portal/page/loadConfig");
+        let query: BTreeMap<_, _> = config_url.query_pairs().into_owned().collect();
+        assert_eq!(query.get("callback").map(String::as_str), Some("dr1001"));
+        assert_eq!(
+            query.get("wlan_user_ip").map(String::as_str),
+            Some("MTAuMTcxLjUxLjIxNg==")
+        );
+        assert_eq!(query.get("jsVersion").map(String::as_str), Some("4.X"));
+        assert_eq!(query.get("terminal_type").map(String::as_str), Some("3"));
+        assert_eq!(query.get("lang").map(String::as_str), Some("zh"));
+        assert_eq!(
+            requests[1].split_whitespace().nth(1),
+            Some("/eportal/extern/prog_1/page_2/hipad.js")
+        );
+    }
+
+    #[tokio::test]
+    async fn portal_client_isps_rejects_invalid_config_path_segments() {
+        let (addr, server) = spawn_stub_http_server(vec![(
+            "application/javascript; charset=utf-8",
+            br#"dr1001({"data":{"program_index":"..","page_index":"page_2"}});"#.to_vec(),
+        )]);
+
+        let client = PortalClient::with_http_client(
+            &format!("http://{addr}"),
+            "10.171.51.216".parse().unwrap(),
+            Client::new(),
+        )
+        .unwrap();
+        let error = client.isps().await.unwrap_err();
+        assert!(error.is_decode());
+        assert!(error.request().is_some());
+        server.join().unwrap();
     }
 }
