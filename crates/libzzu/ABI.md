@@ -262,6 +262,7 @@ zzu_runtime_free(runtime);
 | `detect_mfa` | 无 | `{"isRequired": boolean, "canUseSms": boolean, "isVerified": boolean}` | 向服务端探测当前账号与设备是否需要 MFA 及是否支持安全手机短信验证 |
 | `send_sms` | 无 | `null` | 向绑定安全手机发送短信验证码（未探测过 MFA 时自动先探测；无需 MFA 或不支持短信时返回 `invalid_mfa_state`） |
 | `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验（未先调用 `send_sms` 返回 `invalid_mfa_state`，验证码错误返回 `mfa_verification_failed`）；通过后须再次调用 `login` |
+| `set_device_trust` | `deviceId: string`、`isTrusted: boolean` | `null` | 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）（需已登录，`deviceId` 不得为空）。`true` 表示信任，`false` 表示取消信任 |
 | `user_info` | 无 | `PersonalInfo` | 查询个人身份信息、未读邮件数、校园卡余额与科研计数（需已登录） |
 | `service_login_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或用户令牌，不得写入日志） |
 

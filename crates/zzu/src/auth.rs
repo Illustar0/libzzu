@@ -1,4 +1,4 @@
-//! 统一身份认证（CAS）会话管理、短信多因素认证、个人信息查询与业务系统单点登录。
+//! 统一身份认证（CAS）会话管理、短信多因素认证、设备信任管理、个人信息查询与业务系统单点登录。
 
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use crate::{AuthenticationErrorKind, Error, Result, crypto, http};
 
 const CAS_URL: &str = "https://cas.s.zzu.edu.cn";
 const APP_AGENT: &str = "SWSuperApp/1.1.1()";
+const AUTHX_URL: &str = "https://authx-service.s.zzu.edu.cn";
 const INFO_URL: &str = "https://authx-service.s.zzu.edu.cn/personal/api/v1/personal/me/user";
 const CARDS_URL: &str =
     "https://info.s.zzu.edu.cn/portal-api/v1/thrid-adapter/get-person-info-card-list";
@@ -541,6 +542,41 @@ impl CasClient {
         }
         session.mfa.status.is_verified = true;
         Ok(())
+    }
+
+    /// 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）。
+    ///
+    /// `is_trusted` 为 `true` 时信任设备，为 `false` 时取消信任。
+    ///
+    /// # Errors
+    /// - `device_id` 为空时返回 [`Error::InvalidInput`]。
+    /// - 客户端尚未登录或令牌不可用时返回 [`Error::Authentication`]。
+    /// - 请求失败、服务端拒绝更新或响应格式不符时返回错误。
+    pub async fn set_device_trust(&self, device_id: &str, is_trusted: bool) -> Result<()> {
+        if device_id.is_empty() {
+            return Err(Error::invalid_input("设备标识不能为空".into()));
+        }
+        let token = self.user_token().await?;
+        let request = self
+            .inner
+            .http
+            .put(format!(
+                "{AUTHX_URL}/personal/api/v1/personal/user/accountUsedAgent/trustUsedAgent"
+            ))
+            .header("X-Id-Token", token)
+            .json(&json!({"agentId": device_id, "agentTrust": is_trusted}));
+        let response = http::json(request).await?;
+        http::check_status(&response, "code")?;
+        match response.get("acknowleged").and_then(Value::as_bool) {
+            Some(true) => Ok(()),
+            Some(false) => {
+                Err(Error::remote(http::message(&response)).with_request(response.context))
+            }
+            None => Err(
+                Error::decode_message("设备信任响应缺少有效的 acknowleged 字段".into())
+                    .with_request(response.context),
+            ),
+        }
     }
 
     /// 查询当前用户的个人身份属性与门户概览卡片数据。

@@ -40,6 +40,13 @@ struct VerifySms {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetDeviceTrust {
+    device_id: String,
+    is_trusted: bool,
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceLogin {
     service: Service,
@@ -80,6 +87,14 @@ impl ClientService for CasClient {
             "verify_sms" => {
                 let VerifySms { code } = parse(params)?;
                 self.verify_sms(&code).await?;
+                done()
+            }
+            "set_device_trust" => {
+                let SetDeviceTrust {
+                    device_id,
+                    is_trusted,
+                } = parse(params)?;
+                self.set_device_trust(&device_id, is_trusted).await?;
                 done()
             }
             "user_info" => reply(&self.user_info().await?),
