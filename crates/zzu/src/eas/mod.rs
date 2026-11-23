@@ -1,25 +1,32 @@
-//! 本科教务系统（EAMS）客户端与学期课表、教室占用数据结构。
+//! 本科教务系统（EAMS）客户端与学期校历、课表、教室占用数据结构。
 
+mod calendar;
 mod classroom;
-mod model;
+mod common;
+mod semester;
+mod timetable;
 
+pub use calendar::CalendarExportOptions;
 pub use classroom::{
     Building, Campus, ClassroomCatalog, ClassroomFetchOptions, ClassroomOccupancy, ClassroomPage,
     ClassroomQuery, DEFAULT_CLASSROOM_CONCURRENCY, DEFAULT_CLASSROOM_PAGE_SIZE, RoomActivityType,
     RoomOccupation, RoomType,
 };
-pub use model::{
-    Course, CourseTableEntry, Lesson, NamedEntity, PeriodInfo, Room, Schedule, Semester,
-    TeachingWeek, TeachingWeeks,
+pub use common::NamedEntity;
+pub use semester::{Semester, SemesterSeason};
+pub use timetable::{
+    ClassOrigin, ClassSession, Course, ExperimentProject, PeriodInfo, Room, ScheduleState,
+    SessionConflict, SessionKind, SessionState, SessionTeacher, SessionView, TeacherName,
+    TeachingClass, Timetable, TimetableOptions, WeekView,
 };
 
 use futures_util::stream::{self, StreamExt, TryStreamExt};
-use jiff::civil::Date;
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 
 use crate::{Error, Result, auth::CasClient, http};
 use classroom::{RawClassroomPage, RoomsRequest, merge_pages, validate_page, validate_page_size};
+use timetable::{RawCourseTableEntry, build_timetable};
 
 const EAS_URL: &str = "https://jwxt.zzu.edu.cn";
 
@@ -129,121 +136,54 @@ impl UndergradEasClient {
         http::data(response, "result")
     }
 
-    /// 查询教务系统中的全部学期列表。
+    /// 查询当前学生可见的全部学期列表。
     ///
     /// # Errors
     ///
     /// - 教务客户端尚未登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
     /// - 网络传输、远端状态校验或学期列表解码失败时返回错误。
     pub async fn semesters(&self) -> Result<Vec<Semester>> {
-        self.fetch("/eams-door/api/v1/calendar/get-all-semesters")
+        self.fetch("/eams-micro-server/api/v1/semester/std-semesters")
             .await
     }
 
-    /// 查询指定学期的完整教学周课表（`semester_id` 为 `None` 时取 [`Self::current_semester`]）。
+    /// 查询指定学期的完整课表（`semester_id` 为 `None` 时取 [`Self::current_semester`]）。
     ///
-    /// 当前学期直接复用登录时缓存的周次，其他学期会先查询学期列表。
+    /// 当前学期直接复用登录时缓存的学期信息，其他学期会先拉取学期列表。
+    /// 返回的 [`Timetable`] 包含学期校历、全部教学班与按时间排序的排课场次，
+    /// 按周查询、冲突检测与日历导出均在本地完成。
     ///
     /// # Errors
     ///
     /// - 教务客户端尚未登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
     /// - 指定的 `semester_id` 在学期列表中不存在时返回 [`Error::NotFound`]。
-    /// - 网络请求或课表时间、节次解码校验失败时返回错误。
-    pub async fn teaching_weeks(&self, semester_id: Option<i64>) -> Result<TeachingWeeks> {
+    /// - 网络请求、远端状态校验或课表解析失败时返回错误。
+    pub async fn timetable(
+        &self,
+        semester_id: Option<i64>,
+        options: TimetableOptions,
+    ) -> Result<Timetable> {
         let current = self.current_semester()?;
-        let semester_id = semester_id.unwrap_or(current.id);
-        let week_indices = if semester_id == current.id {
-            current.week_indices.clone()
-        } else {
-            self.semesters()
+        let semester = match semester_id {
+            None => current.clone(),
+            Some(id) if id == current.id => current.clone(),
+            Some(id) => self
+                .semesters()
                 .await?
                 .into_iter()
-                .find(|semester| semester.id == semester_id)
-                .ok_or_else(|| Error::not_found(format!("semester_id={semester_id}")))?
-                .week_indices
+                .find(|semester| semester.id == id)
+                .ok_or_else(|| Error::not_found(format!("semester_id={id}")))?,
         };
         let request = self
             .request(&format!(
-                "/eams-micro-server/api/v1/lesson/student/course-table/{semester_id}"
+                "/eams-micro-server/api/v1/lesson/student/course-table/{}",
+                semester.id
             ))
             .await?
-            .query(&[("hasExperiment", true)]);
+            .query(&[("hasExperiment", options.include_experiments)]);
         let response = http::json(request).await?;
-        let courses: Vec<CourseTableEntry> = http::data(response, "result")?;
-        TeachingWeeks::from_courses(&week_indices, courses)
-    }
-
-    /// 按教学周序号 [`TeachingWeek::week_index`] 查询单周课表（`semester_id` 为 `None` 时取当前学期）。
-    ///
-    /// # Errors
-    ///
-    /// - `week == 0` 或目标学期不存在该教学周时返回 [`Error::InvalidInput`]。
-    /// - 其余错误条件同 [`Self::teaching_weeks`]。
-    pub async fn teaching_week(&self, week: u32, semester_id: Option<i64>) -> Result<TeachingWeek> {
-        if week == 0 {
-            return Err(Error::invalid_input("教学周从 1 开始".into()));
-        }
-        self.teaching_weeks(semester_id)
-            .await?
-            .into_iter()
-            .find(|teaching_week| teaching_week.week_index == week)
-            .ok_or_else(|| Error::invalid_input(format!("学期不存在教学周 {week}")))
-    }
-
-    /// 查询公历日期 `date` 在校历中对应的教学周序号；假期等非教学周返回 `Ok(None)`。
-    ///
-    /// 内部先换算为 `date` 所在周的周一再发起查询，以规避上游校历接口在秋季学期跨年后周二至周日周次少 1 的缺陷。
-    ///
-    /// # Errors
-    ///
-    /// - 教务客户端尚未登录或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
-    /// - 校历接口请求失败、返回远端业务错误或周次字段不是正整数时返回错误。
-    pub async fn week_index(&self, date: Date) -> Result<Option<u32>> {
-        #[derive(serde::Deserialize)]
-        struct WeekData {
-            date: Vec<String>,
-        }
-        #[derive(serde::Deserialize)]
-        struct Inner {
-            code: i64,
-            success: bool,
-            msg: String,
-            data: WeekData,
-        }
-        self.current_semester()?;
-        let token = self.cas.user_token().await?;
-        let monday = date
-            .iso_week_date()
-            .first_of_week()
-            .map_err(Error::decode)?
-            .date();
-        let request = self
-            .http
-            .get(
-                "https://info.s.zzu.edu.cn/portal-api/v1/calendar/share/schedule/getWeekOfTeaching",
-            )
-            .header("X-Id-Token", token)
-            .query(&[("today", monday.to_string())]);
-        let response = http::json(request).await?;
-        let inner: Inner = http::data(response, "code")?;
-        if inner.code != 0 || !inner.success {
-            return Err(Error::remote(inner.msg));
-        }
-        let week = inner
-            .data
-            .date
-            .first()
-            .ok_or_else(|| Error::decode_message("教学周 date 为空".into()))?;
-        if week.is_empty() {
-            return Ok(None);
-        }
-        let week = week
-            .parse::<u32>()
-            .map_err(|_| Error::decode_message("教学周必须为正整数".into()))?;
-        if week == 0 {
-            return Err(Error::decode_message("教学周必须为正整数".into()));
-        }
-        Ok(Some(week))
+        let entries: Vec<RawCourseTableEntry> = http::data(response, "result")?;
+        build_timetable(semester, entries)
     }
 
     /// 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型与楼层）。
@@ -393,7 +333,7 @@ mod tests {
     };
 
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    use jiff::Timestamp;
+    use jiff::{Timestamp, civil::Date};
     use serde_json::{Value, json};
 
     use super::*;
@@ -694,7 +634,7 @@ mod tests {
         assert!(page.has_next());
         assert_eq!(page.items.len(), 2);
         assert_eq!(page.items[0].occupations.len(), 1);
-        assert!(page.items[1].occupations.is_empty());
+        assert_eq!(page.items[1].occupations, []);
     }
 
     #[tokio::test]
@@ -887,5 +827,91 @@ mod tests {
                 .unwrap_err()
                 .is_invalid_input()
         );
+    }
+
+    #[tokio::test]
+    async fn timetable_fetches_std_semesters_and_respects_experiment_option() {
+        let server = StubServer::start(|request| match request.target.as_str() {
+            "/eams-micro-server/api/v1/semester/std-semesters" => json!({
+                "result": 0,
+                "message": null,
+                "data": [{
+                    "id": 194,
+                    "code": "2026-2027-1",
+                    "nameZh": "2026-2027-1",
+                    "nameEn": null,
+                    "schoolYear": "2026-2027",
+                    "startDate": "2026-09-07",
+                    "endDate": "2027-01-17",
+                    "weekStartOnSunday": false,
+                    "countInTerm": true,
+                    "season": "AUTUMN",
+                    "weekIndices": [1, 2]
+                }]
+            })
+            .to_string(),
+            "/eams-micro-server/api/v1/lesson/student/course-table/194?hasExperiment=false" => {
+                json!({
+                    "result": 0,
+                    "message": null,
+                    "data": [{
+                        "id": 1001,
+                        "code": "CS101-001",
+                        "bizTypeId": 2,
+                        "course": {
+                            "id": 2001,
+                            "code": "CS101",
+                            "nameZh": "程序设计",
+                            "credits": 2,
+                            "periodInfo": {"total": 32, "weeks": 16, "periodsPerWeek": 2}
+                        },
+                        "teacherAssignmentList": ["教师"],
+                        "scheduleState": "published",
+                        "schedules": [{
+                            "scheduleGroupId": 3001,
+                            "date": "2026-09-07",
+                            "weekday": 1,
+                            "startTime": 800,
+                            "endTime": 940,
+                            "realStartTime": 800,
+                            "realEndTime": 940,
+                            "teacherName": "教师",
+                            "startUnit": 1,
+                            "endUnit": 2,
+                            "state": "未完成",
+                            "weekIndex": 1,
+                            "lessonType": "THEORY",
+                            "periods": 2
+                        }]
+                    }]
+                })
+                .to_string()
+            }
+            other => panic!("unexpected path: {other}"),
+        });
+
+        let (eas, _) = authenticated_eas(server.base_url()).await;
+        let semesters = eas.semesters().await.unwrap();
+        assert_eq!(semesters.len(), 1);
+        assert_eq!(semesters[0].id, 194);
+
+        let timetable = eas
+            .timetable(
+                Some(194),
+                TimetableOptions {
+                    include_experiments: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(timetable.semester.id, 194);
+        assert_eq!(timetable.classes.len(), 1);
+        assert_eq!(timetable.sessions.len(), 1);
+
+        let missing = eas
+            .timetable(Some(999), TimetableOptions::default())
+            .await
+            .unwrap_err();
+        assert!(missing.is_not_found());
     }
 }

@@ -289,16 +289,17 @@ ZzuStatus zzu_cas_call_blocking(const struct ZzuCasClient *cas,
 /**
  * 将学期课表渲染为 `iCalendar`（`.ics`）文本（当前线程同步完成，不发起网络请求，无需客户端）。
  *
- * `weeks` 为 `teaching_weeks` 返回的 UTF-8 JSON 数组；仅导出一周时传入包含 `teaching_week` 结果的单元素数组。
+ * `params` 为 UTF-8 JSON 对象 `{"timetable": Timetable, "options"?: CalendarExportOptions}`，
+ * 其中 `timetable` 为 `timetable` 方法返回的课表快照，`options` 可省略。
  * 返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的 `.ics` 文本，否则为错误 JSON。
  *
  * # Safety
  *
- * - `weeks` 在 `weeks_len` 非零时必须指向调用期间可读的 `weeks_len` 字节。
+ * - `params` 在 `params_len` 非零时必须指向调用期间可读的 `params_len` 字节。
  * - `out_payload` 必须非空、对齐且独占可写（`NULL` 时返回 `ZZU_INVALID_INPUT`）；写入的缓冲区须通过 `zzu_buffer_free` 释放。
  */
-ZzuStatus zzu_timetable_to_calendar(const uint8_t *weeks,
-                                    size_t weeks_len,
+ZzuStatus zzu_timetable_to_calendar(const uint8_t *params,
+                                    size_t params_len,
                                     struct ZzuBuffer **out_payload);
 
 /**

@@ -3,8 +3,8 @@ use std::ffi::{c_char, c_void};
 use jiff::civil::Date;
 use serde::Deserialize;
 use zzu::eas::{
-    ClassroomFetchOptions, ClassroomQuery, DEFAULT_CLASSROOM_CONCURRENCY,
-    DEFAULT_CLASSROOM_PAGE_SIZE, TeachingWeeks as Timetable, UndergradEasClient,
+    CalendarExportOptions, ClassroomFetchOptions, ClassroomQuery, DEFAULT_CLASSROOM_CONCURRENCY,
+    DEFAULT_CLASSROOM_PAGE_SIZE, Timetable, TimetableOptions, UndergradEasClient,
 };
 
 use super::{Guarded, ZzuCasClient, done, parse, reply};
@@ -20,21 +20,19 @@ pub struct ZzuEasClient(Client<Guarded<UndergradEasClient>>);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct TeachingWeeks {
+struct TimetableParams {
+    #[serde(default)]
     semester_id: Option<i64>,
+    #[serde(default)]
+    include_experiments: Option<bool>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct TeachingWeek {
-    week: u32,
-    semester_id: Option<i64>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WeekIndex {
-    date: Date,
+struct TimetableCalendarParams {
+    timetable: Timetable,
+    #[serde(default)]
+    options: Option<CalendarExportOptions>,
 }
 
 #[derive(Deserialize)]
@@ -95,17 +93,16 @@ impl Service for Guarded<UndergradEasClient> {
             "is_logged_in" => reply(&self.read().await?.is_logged_in()),
             "current_semester" => reply(self.read().await?.current_semester()?),
             "semesters" => reply(&self.read().await?.semesters().await?),
-            "teaching_weeks" => {
-                let TeachingWeeks { semester_id } = parse(params)?;
-                reply(&self.read().await?.teaching_weeks(semester_id).await?)
-            }
-            "teaching_week" => {
-                let TeachingWeek { week, semester_id } = parse(params)?;
-                reply(&self.read().await?.teaching_week(week, semester_id).await?)
-            }
-            "week_index" => {
-                let WeekIndex { date } = parse(params)?;
-                reply(&self.read().await?.week_index(date).await?)
+            "timetable" => {
+                let TimetableParams {
+                    semester_id,
+                    include_experiments,
+                } = parse(params)?;
+                let options = TimetableOptions {
+                    include_experiments: include_experiments
+                        .unwrap_or(TimetableOptions::default().include_experiments),
+                };
+                reply(&self.read().await?.timetable(semester_id, options).await?)
             }
             "classroom_catalog" => reply(&self.read().await?.classroom_catalog().await?),
             "classroom_occupancies_page" => {
@@ -158,25 +155,27 @@ impl Service for Guarded<UndergradEasClient> {
 
 /// 将学期课表渲染为 `iCalendar`（`.ics`）文本（当前线程同步完成，不发起网络请求，无需客户端）。
 ///
-/// `weeks` 为 `teaching_weeks` 返回的 UTF-8 JSON 数组；仅导出一周时传入包含 `teaching_week` 结果的单元素数组。
+/// `params` 为 UTF-8 JSON 对象 `{"timetable": Timetable, "options"?: CalendarExportOptions}`，
+/// 其中 `timetable` 为 `timetable` 方法返回的课表快照，`options` 可省略。
 /// 返回 `ZZU_OK` 时 `*out_payload` 为 JSON 字符串形式的 `.ics` 文本，否则为错误 JSON。
 ///
 /// # Safety
 ///
-/// - `weeks` 在 `weeks_len` 非零时必须指向调用期间可读的 `weeks_len` 字节。
+/// - `params` 在 `params_len` 非零时必须指向调用期间可读的 `params_len` 字节。
 /// - `out_payload` 必须非空、对齐且独占可写（`NULL` 时返回 `ZZU_INVALID_INPUT`）；写入的缓冲区须通过 `zzu_buffer_free` 释放。
 // SAFETY: The symbol belongs to this library's zzu_ namespace.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zzu_timetable_to_calendar(
-    weeks: *const u8,
-    weeks_len: usize,
+    params: *const u8,
+    params_len: usize,
     out_payload: *mut *mut ZzuBuffer,
 ) -> ZzuStatus {
     // SAFETY: The caller upholds the documented pointer contracts.
     unsafe {
         compute(out_payload, || {
-            let weeks: Timetable = parse(bytes(weeks, weeks_len)?)?;
-            reply(&weeks.to_calendar().to_string())
+            let TimetableCalendarParams { timetable, options } = parse(bytes(params, params_len)?)?;
+            let options = options.unwrap_or_default();
+            reply(&timetable.to_calendar(&options)?.to_string())
         })
     }
 }

@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fmt;
 
 use jiff::{Zoned, civil::Date};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use super::model::parse_time;
+use super::common::{deserialize_null_default, parse_time};
 use crate::{Error, Result};
 
 /// 教室占用分页查询的默认每页条数。
@@ -19,7 +19,7 @@ pub const DEFAULT_CLASSROOM_PAGE_SIZE: u32 = 44;
 pub const DEFAULT_CLASSROOM_CONCURRENCY: usize = 8;
 
 /// 校区元数据。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Campus {
     /// 校区数字 ID。
@@ -34,13 +34,10 @@ pub struct Campus {
     pub remark: Option<String>,
     /// 是否启用。
     pub enabled: bool,
-    /// 教务接口返回的未建模扩展字段。
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 /// 教学楼元数据。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Building {
     /// 教学楼数字 ID。
@@ -60,13 +57,10 @@ pub struct Building {
     pub remark: Option<String>,
     /// 是否启用。
     pub enabled: bool,
-    /// 教务接口返回的未建模扩展字段。
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 /// 教室类型元数据（如普通教室、多媒体教室、智慧教室）。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoomType {
     /// 教室类型数字 ID。
@@ -79,9 +73,6 @@ pub struct RoomType {
     pub name_en: Option<String>,
     /// 是否启用。
     pub enabled: bool,
-    /// 教务接口返回的未建模扩展字段。
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 /// 教室占用查询所需的筛选目录快照。
@@ -262,7 +253,7 @@ impl<'de> Deserialize<'de> for RoomActivityType {
 ///
 /// 上游接口当前不回填节次字段（`unitStart` / `unitEnd` 恒为 `null`），
 /// 因此占用范围以 `Asia/Shanghai` 时区的时间区间 `[start_time, end_time)` 表示。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", try_from = "RawRoomOccupation")]
 pub struct RoomOccupation {
     /// 关联活动 ID（实验项目等场景可能为 `None`）。
@@ -283,9 +274,6 @@ pub struct RoomOccupation {
     pub teacher_name: String,
     /// 授课教师或借用负责人英文姓名。
     pub teacher_name_en: Option<String>,
-    /// 教务接口返回的未建模扩展字段。
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Deserialize)]
@@ -305,8 +293,6 @@ struct RawRoomOccupation {
     teacher_name: String,
     #[serde(default)]
     teacher_name_en: Option<String>,
-    #[serde(flatten)]
-    extra: BTreeMap<String, Value>,
 }
 
 impl TryFrom<RawRoomOccupation> for RoomOccupation {
@@ -330,16 +316,15 @@ impl TryFrom<RawRoomOccupation> for RoomOccupation {
             end_time,
             teacher_name: raw.teacher_name,
             teacher_name_en: raw.teacher_name_en,
-            extra: raw.extra,
         })
     }
 }
 
 /// 教室基础信息及其在查询当日的占用列表。
 ///
-/// 注意：教务上游在返回教室对象时未回填 `floor`、`seatsForLesson`、`enabled`、`virtual`、
-/// `experiment`（始终返回默认零值 `0`/`false`），这些字段保留在 [`Self::extra`] 中而不升格为强类型字段。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+/// 上游接口在返回教室对象时未回填 `floor`、`seatsForLesson`、`enabled`、`virtual`、`experiment`
+/// （始终返回零值 `0` / `false`），因此不在领域模型中暴露这些无效字段。
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassroomOccupancy {
     /// 教室数字 ID。
@@ -361,9 +346,6 @@ pub struct ClassroomOccupancy {
         deserialize_with = "deserialize_null_default"
     )]
     pub occupations: Vec<RoomOccupation>,
-    /// 教务接口返回的未建模扩展字段。
-    #[serde(flatten)]
-    pub extra: BTreeMap<String, Value>,
 }
 
 impl ClassroomOccupancy {
@@ -502,14 +484,6 @@ pub(super) fn merge_pages(
     merged
 }
 
-fn deserialize_null_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Default + Deserialize<'de>,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -534,19 +508,18 @@ mod tests {
         });
         let building: Building = serde_json::from_value(raw).unwrap();
         assert_eq!(building.campus_id, 2);
-        assert!(!building.extra.contains_key("campusAssoc"));
-        assert_eq!(building.extra.get("transient"), Some(&json!(false)));
 
         let serialized = serde_json::to_value(&building).unwrap();
         assert_eq!(serialized["campusId"], 2);
         assert!(serialized.get("campusAssoc").is_none());
+        assert!(serialized.get("transient").is_none());
 
         let restored: Building = serde_json::from_value(serialized).unwrap();
-        assert_eq!(restored.campus_id, 2);
+        assert_eq!(restored, building);
     }
 
     #[test]
-    fn classroom_occupancy_normalizes_null_occupations_and_preserves_extra() {
+    fn classroom_occupancy_normalizes_null_occupations_and_ignores_unmodeled_fields() {
         let raw = json!({
             "id": 1999,
             "nameZh": "建材实验室",
@@ -562,14 +535,14 @@ mod tests {
             "roomOccupationInfoVms": null
         });
         let room: ClassroomOccupancy = serde_json::from_value(raw).unwrap();
-        assert!(room.occupations.is_empty());
-        assert_eq!(room.extra.get("seatsForLesson"), Some(&json!(0)));
-        assert_eq!(room.extra.get("enabled"), Some(&json!(false)));
+        assert_eq!(room.occupations, []);
 
-        let restored: ClassroomOccupancy =
-            serde_json::from_slice(&serde_json::to_vec(&room).unwrap()).unwrap();
-        assert_eq!(restored.id, 1999);
-        assert!(restored.occupations.is_empty());
+        let serialized = serde_json::to_value(&room).unwrap();
+        assert!(serialized.get("seatsForLesson").is_none());
+        assert!(serialized.get("roomOccupationInfoVms").is_none());
+
+        let restored: ClassroomOccupancy = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored, room);
     }
 
     fn sample_room_with_occupations() -> ClassroomOccupancy {

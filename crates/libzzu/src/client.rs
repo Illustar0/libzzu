@@ -285,6 +285,7 @@ mod tests {
         zzu_cas_call, zzu_cas_call_blocking, zzu_cas_free, zzu_cas_new, zzu_eas_call, zzu_eas_free,
         zzu_eas_new, zzu_ecard_call, zzu_ecard_free, zzu_ecard_new, zzu_portal_discover_blocking,
         zzu_recharge_order_checkout_url_for, zzu_room_id_parse, zzu_runtime_free, zzu_runtime_new,
+        zzu_timetable_to_calendar,
     };
 
     type Completion = (ZzuStatus, Value);
@@ -487,17 +488,97 @@ mod tests {
         );
         // 拼错的字段名必须报错，而不是被静默忽略后退回默认学期。
         assert_eq!(
-            call_async(
-                zzu_eas_call,
-                eas,
-                c"teaching_weeks",
-                br#"{"semester_id":1}"#
-            )
-            .0,
+            call_async(zzu_eas_call, eas, c"timetable", br#"{"semester_id":1}"#).0,
             ZZU_INVALID_INPUT
         );
         // SAFETY: The handle came from its constructor and is released once.
         unsafe { zzu_eas_free(eas) };
+    }
+
+    #[test]
+    fn timetable_calendar_renders_and_validates_without_a_client() {
+        let params = json!({
+            "timetable": {
+                "semester": {
+                    "id": 194,
+                    "code": "2026-2027-1",
+                    "nameZh": "2026-2027学年第一学期",
+                    "schoolYear": "2026-2027",
+                    "season": "autumn",
+                    "startDate": "2026-09-07",
+                    "endDate": "2027-01-17",
+                    "weekStartOnSunday": false,
+                    "countInTerm": true,
+                    "weekIndices": [1, 2]
+                },
+                "classes": [{
+                    "id": 1001,
+                    "code": "CS101-001",
+                    "origin": "regular",
+                    "course": {
+                        "id": 2001,
+                        "code": "CS101",
+                        "nameZh": "程序设计",
+                        "credits": 2.0,
+                        "periodInfo": {"total": 32, "weeks": 16, "periodsPerWeek": 2}
+                    },
+                    "teachers": [{"nameZh": "教师"}],
+                    "scheduleState": "published"
+                }],
+                "sessions": [{
+                    "classId": 1001,
+                    "scheduleGroupId": 3001,
+                    "weekIndex": 1,
+                    "date": "2026-09-07",
+                    "weekday": 1,
+                    "startTime": "2026-09-07T08:00:00+08:00[Asia/Shanghai]",
+                    "endTime": "2026-09-07T09:40:00+08:00[Asia/Shanghai]",
+                    "startUnit": 1,
+                    "endUnit": 2,
+                    "teachers": [{"nameZh": "教师"}],
+                    "kind": "theory"
+                }]
+            },
+            "options": {
+                "weeks": [1],
+                "alarmMinutesBefore": [15]
+            }
+        });
+        let (status, payload) = compute_json(
+            zzu_timetable_to_calendar,
+            &serde_json::to_vec(&params).unwrap(),
+        );
+        assert_eq!(status, ZZU_OK, "{payload}");
+        let ics = payload.as_str().unwrap();
+        assert!(ics.contains("BEGIN:VEVENT"));
+        assert!(ics.contains("BEGIN:VALARM"));
+        assert!(ics.contains("SUMMARY:程序设计"));
+
+        let bad_options = json!({
+            "timetable": params["timetable"],
+            "options": {"weeks": [0]}
+        });
+        assert_eq!(
+            compute_json(
+                zzu_timetable_to_calendar,
+                &serde_json::to_vec(&bad_options).unwrap()
+            )
+            .0,
+            ZZU_INVALID_INPUT
+        );
+
+        let unknown_field = json!({
+            "timetable": params["timetable"],
+            "extra": true
+        });
+        assert_eq!(
+            compute_json(
+                zzu_timetable_to_calendar,
+                &serde_json::to_vec(&unknown_field).unwrap()
+            )
+            .0,
+            ZZU_INVALID_INPUT
+        );
     }
 
     type ComputeFn = unsafe extern "C" fn(*const u8, usize, *mut *mut ZzuBuffer) -> ZzuStatus;

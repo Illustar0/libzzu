@@ -30,7 +30,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | 缓冲区 | `zzu_buffer_data`、`zzu_buffer_len`、`zzu_buffer_free` | 读取与释放本库分配的字节缓冲区 |
 | 运行时 | `zzu_runtime_new`、`zzu_runtime_free` | 创建与释放后台异步运行时（通常每进程一个） |
 | CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、个人信息与业务系统单点登录 |
-| 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、教学周课表与教室占用查询 |
+| 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、学期课表与教室占用查询 |
 | 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、宿舍电费查询与充值、校园卡充值下单 |
 | Portal 探测 | `zzu_portal_discover`、`zzu_portal_discover_blocking` | 自动探测当前网络下的校园网 Portal 地址与本机内网 IP |
 | Portal 客户端 | `zzu_portal_new`、`zzu_portal_free`、`zzu_portal_call`、`zzu_portal_call_blocking` | 校园网 `eportal` 终端上线认证 |
@@ -62,7 +62,7 @@ uint32_t minor = version & 0xFFFF;
 
 跨语言混用内存分配器会破坏堆结构，所有跨越 ABI 边界的指针遵循“谁分配、谁释放”原则：
 
-- **输入参数同步复制**：方法名 `method` 为 `NUL` 结尾的 UTF-8 字符串；字节切片参数（`config`、`options`、`params`、`weeks`、`room`）为 UTF-8 字节序列，**不要求**以 `NUL` 结尾。当长度参数为 `0` 时，对应数据指针可传 `NULL`；长度大于 `0` 时数据指针须非空且在调用期间可读。所有函数（含异步 `zzu_*_call`）均在返回前完成输入复制，调用方在函数返回后即可立即释放或复用输入缓冲区。
+- **输入参数同步复制**：方法名 `method` 为 `NUL` 结尾的 UTF-8 字符串；字节切片参数（`config`、`options`、`params`、`room`）为 UTF-8 字节序列，**不要求**以 `NUL` 结尾。当长度参数为 `0` 时，对应数据指针可传 `NULL`；长度大于 `0` 时数据指针须非空且在调用期间可读。所有函数（含异步 `zzu_*_call`）均在返回前完成输入复制，调用方在函数返回后即可立即释放或复用输入缓冲区。
 - **输出缓冲区（`ZzuBuffer`）**：由本库分配，承载成功结果或错误详情的 UTF-8 JSON 字节流。调用方通过 `zzu_buffer_data` 获取首字节地址、通过 `zzu_buffer_len` 获取字节长度，读取完毕后**必须**调用 `zzu_buffer_free` 释放。缓冲区末尾**不保证**含 `NUL` 字节，严禁直接当作 C 字符串传入 `strlen` 等函数。向 `zzu_buffer_data` 传入 `NULL` 返回 `NULL`，向 `zzu_buffer_len` 传入 `NULL` 返回 `0`。
 - **回调上下文（`user_data`）**：由本库原样透传给 `ZzuCallback`，可为 `NULL`。若非空，调用方须保证该指针可安全跨线程传递，并在回调触发前保持有效。
 - **释放函数幂等（`zzu_*_free`）**：所有 `zzu_*_free` 函数传入 `NULL` 时均为空操作，不阻塞当前线程，可在任意线程（包括回调内部）调用。每个非空句柄只能释放一次；释放 `ZzuBuffer` 后，此前由 `zzu_buffer_data` 取得的数据指针立即失效。
@@ -119,7 +119,7 @@ if (zzu_cas_call(cas, "login", NULL, 0, on_cas_login, ctx, &call) == ZZU_OK) {
 
 // 3. on_cas_login 成功后调用 zzu_eas_call(eas, "login", ...)；教务登录完成后可并发发起多项只读查询
 zzu_eas_call(eas, "semesters", NULL, 0, on_complete, ctx_semesters, NULL);
-zzu_eas_call(eas, "teaching_weeks", NULL, 0, on_complete, ctx_weeks, NULL);
+zzu_eas_call(eas, "timetable", NULL, 0, on_complete, ctx_timetable, NULL);
 
 // 4. 按任意顺序释放客户端与运行时
 zzu_eas_free(eas);
@@ -133,7 +133,7 @@ zzu_runtime_free(runtime);
 
 - **线程安全与读写并发**：所有导出函数均支持多线程并发调用。各客户端按状态可变性采用不同的内部同步策略：
   - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
-    - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`teaching_weeks`、`teaching_week`、`week_index`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
+    - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`timetable`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
     - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话与默认房间缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
   - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_login_url` 在读取令牌并释放会话锁后并发执行网络请求。
@@ -198,7 +198,7 @@ zzu_runtime_free(runtime);
 
 ### JSON 编码规范
 
-- **命名风格**：所有配置、请求参数与响应对象的字段名均采用 `camelCase`，枚举字符串采用 `snake_case`。无返回值的方法成功时返回 JSON 字面量 `null`。例外：教务课表模型中透传的未建模上游扩展字段保留服务端原始键名，不保证为 `camelCase`。
+- **命名风格**：所有配置、请求参数与响应对象的字段名均采用 `camelCase`，枚举字符串采用 `snake_case`。无返回值的方法成功时返回 JSON 字面量 `null`。
 - **空参数传递**：无参方法或全部字段均取默认值的配置/参数，传入 `NULL` 与长度 `0`（内部等价于 `{}`）或传入 `"{}"` 均可；**不得**传入字面量 `"null"`（参数反序列化期望 JSON 对象，传 `"null"` 会触发 `ZZU_INVALID_INPUT`）。
 - **严进宽出**：
   - **请求与配置拒绝未知字段**：所有带参方法与配置对象默认开启未知字段校验，字段名拼写错误（如误传 `"semester_id"`）会立即返回 `ZZU_INVALID_INPUT`，绝不静默忽略而退回默认值。仅三处例外：无参方法不解析 `params`；`ZzuCasClient` 的 `set_tokens` 忽略多余字段并兼容 `"idToken"` 别名；校园卡支付相关方法的 `order` 字段允许携带 `create_recharge_order` 返回对象中的 `id` 与内部扩展字段。
@@ -299,32 +299,39 @@ zzu_runtime_free(runtime);
 | `logout` | 无 | `null` | 清除教务客户端缓存的当前学期登录态（不影响底层 `ZzuCasClient`） |
 | `is_logged_in` | 无 | `boolean` | 返回教务客户端是否已完成登录 |
 | `current_semester` | 无 | `Semester` | 直接返回 `login` 时缓存的当前学期对象（无网络请求） |
-| `semesters` | 无 | `Semester[]` | 查询教务系统全部学期列表 |
-| `teaching_weeks` | `semesterId?: integer` | `TeachingWeek[]` | 查询指定学期（省略时取当前学期）按校历排列的全部教学周课表；`semesterId` 不存在时返回 `ZZU_NOT_FOUND` |
-| `teaching_week` | `week: integer`、`semesterId?: integer` | `TeachingWeek` | 按教学周序号查询单周课表；`week` 从 `1` 开始，对应 `TeachingWeek.weekIndex`（非数组下标），为 `0` 或不在学期内时返回 `ZZU_INVALID_INPUT` |
-| `week_index` | `date: "YYYY-MM-DD"` | `integer \| null` | 查询指定公历日期所属的教学周序号（正整数），假期等非教学周返回 `null`。内部自动换算为该周周一查询，以规避上游接口在秋季学期跨年后周二至周日周次少 1 的缺陷；结果按该日期实际所在学期计算 |
+| `semesters` | 无 | `Semester[]` | 查询当前学生可见的全部学期列表 |
+| `timetable` | `semesterId?: int64`、`includeExperiments?: boolean` | `Timetable` | 查询指定学期（省略时取当前学期）的完整课表；`includeExperiments` 默认 `true`；`semesterId` 不存在时返回 `ZZU_NOT_FOUND` |
 | `classroom_catalog` | 无 | `ClassroomCatalog` | 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型与楼层），返回扁平列表供前端渲染筛选项及按 `buildingId` 反查教学楼信息 |
 | `classroom_occupancies_page` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`page?: uint32`、`pageSize?: uint32` | `ClassroomPage` | 按页查询符合筛选条件的教室及当日占用记录。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `44`；`page == 0`、`pageSize == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。**性能警告**：上游 API 存在极其严重的性能问题，响应耗时随 `pageSize` 增大而非线性增大（`100` 约 1 秒以上，`1000` 约 25 秒以上），`44` 左右通常是单条均摊耗时最低的甜点值；不清楚后端特性时请保持默认，高占用率校区可酌情调小以降低单页尾延迟 |
 | `classroom_occupancies` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`pageSize?: uint32`、`concurrency?: uint64` | `ClassroomOccupancy[]` | 先以 `pageSize`（默认 `44`）拉取第 1 页获知总页数，再以 `concurrency`（默认 `8`）为并发上限并发拉取剩余分页，按页序合并并按教室 `id` 去重（任一页失败立即中止并返回错误）。`pageSize == 0`、`concurrency == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。不带空间筛选的整校查询（约 1658 间教室）在高占用时段可能接近默认 `15000` 毫秒时限，建议配合校区/教学楼筛选、放宽 `timeoutMs`，或在需要进度条与单页容错时改用 `classroom_occupancies_page` |
 
-教务数据模型（`Semester`、`Course`、`PeriodInfo`、`Schedule`、`Room`、`Campus`、`Building`、`RoomType`、`ClassroomOccupancy`、`RoomOccupation` 还会原样透传上游返回的未建模扩展字段）：
+离线教学周换算规则（SDK 可直接基于 `Semester` 在本地计算，无需发起网络请求）：
+- 若目标公历日期 `date` 小于 `startDate` 或大于 `endDate`，该日期不属于本学期。
+- 按 `weekStartOnSunday` 分别将 `startDate` 与 `date` 回退到所在周的周首日（`true` 回退至周日，`false` 回退至周一）。
+- 取 `offset = (dateWeekStart - startWeekStart) / 7`，对应 `weekIndices[offset]` 即为该日期所属教学周序号；同理，第 `k` 项周次的完整 7 天区间为 `[startWeekStart + 7 * k, startWeekStart + 7 * k + 6]`。
+
+教务数据模型：
 
 | 类型 | JSON 字段与类型 | 说明 |
 | --- | --- | --- |
-| `Semester` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`schoolYear: string`、`startDate: "YYYY-MM-DD"`、`endDate: "YYYY-MM-DD"`、`weekStartOnSunday: boolean`、`countInTerm: boolean`、`season: string`、`weekIndices: uint32[]` | 学期校历元数据；`weekIndices` 按校历顺序列出本学期包含的教学周序号 |
-| `TeachingWeek` | `weekIndex: uint32`、`lessons: Lesson[]` | 单周排课集合；每周 7 天（`1..=7`），每天 10 节（`1..=10`） |
-| `Lesson` | `course: Course`、`schedule: Schedule` | 绑定课程元数据与单次排课记录的课表条目 |
-| `Course` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`credits: float64 \| null`、`periodInfo: PeriodInfo` | 课程基础元数据；实验课的 `credits` 为 `null` |
-| `PeriodInfo` | `total: uint32`、`weeks: uint32 \| null`、`periodsPerWeek: uint32 \| null` | 总学时、开课总周数与每周学时数；实验课的 `weeks`、`periodsPerWeek` 为 `null` |
-| `Schedule` | `scheduleGroupId: int64`、`date: "YYYY-MM-DD"`、`weekday: uint8`（`1..=7`）、`startTime: string`、`endTime: string`、`realStartTime: string`、`realEndTime: string`、`teacherName: string`、`teacherNameEn: string \| null`、`customPlace: string \| null`、`room: Room \| null`、`startUnit: uint8`（`1..=10`）、`endUnit: uint8`（`1..=10`）、`state: string \| null`、`weekIndex: uint32`、`lessonType: string \| null`、`periods: uint32 \| null` | 单次排课详情；四个时间字段均为 `Asia/Shanghai` 时区的 RFC 9557 字符串，未单独指定实际时间时 `realStartTime`、`realEndTime` 与标准起止时间一致；实验课的 `state`、`lessonType`、`periods` 为 `null` |
-| `Room` | `id: int64`、`nameZh: string`、`nameEn: string \| null`、`building: NamedEntity`、`campus: NamedEntity` | 上课教室及其所属教学楼与校区 |
+| `Semester` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`schoolYear: string`、`season: string`、`startDate: "YYYY-MM-DD"`、`endDate: "YYYY-MM-DD"`、`weekStartOnSunday: boolean`、`countInTerm: boolean`、`weekIndices: uint32[]` | 学期校历元数据；`season` 已知取值为 `"spring"`、`"autumn"`、`"summer"`、`"winter"`（须容忍未知字符串）；`weekIndices` 非零且唯一 |
+| `Timetable` | `semester: Semester`、`classes: TeachingClass[]`、`sessions: ClassSession[]` | 单个学期的完整课表；`sessions` 按上课时间升序排列，每条 `session.classId` 均存在于 `classes` 中 |
+| `TeachingClass` | `id: int64`、`code: string`、`origin: "regular" \| "standalone_experiment"`、`course: Course`、`courseType: NamedEntity \| null`、`cultivateType: NamedEntity \| null`、`department: NamedEntity \| null`、`campus: NamedEntity \| null`、`teachers: TeacherName[]`、`studentCount: uint32 \| null`、`scheduleState: string`、`scheduleText: string \| null`、`scheduleTextEn: string \| null`、`remark: string \| null` | 学期教学班元数据（含未排课课程与实验父班）；`scheduleState` 已知取值为 `"published"`、`"unpublished"`（须容忍未知字符串） |
+| `Course` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`credits: float64 \| null`、`periodInfo: PeriodInfo` | 课程基础元数据；独立实验课程的 `credits` 可能为 `null` |
+| `PeriodInfo` | `total: uint32`、`weeks: uint32 \| null`、`periodsPerWeek: uint32 \| null`、`theory: uint32 \| null`、`experiment: uint32 \| null`、`practice: uint32 \| null`、`design: uint32 \| null`、`machine: uint32 \| null`、`test: uint32 \| null` | 总学时、开课周数、周学时与分项学时统计 |
+| `TeacherName` | `nameZh: string`、`nameEn: string \| null` | 教学班任课教师姓名 |
+| `ClassSession` | `classId: int64`、`scheduleGroupId: int64`、`weekIndex: uint32`、`date: "YYYY-MM-DD"`、`originalDate: "YYYY-MM-DD" \| null`、`weekday: uint8`（`1..=7`）、`startTime: string`、`endTime: string`、`startUnit: uint8`、`endUnit: uint8`、`startUnitNameZh: string \| null`、`endUnitNameZh: string \| null`、`teachers: SessionTeacher[]`、`room: Room \| null`、`customPlace: string \| null`、`kind: string`、`state: string \| null`、`periods: uint32 \| null`、`experimentProject: ExperimentProject \| null` | 单次上课场次；同教学班同时间同地点的多人合上记录已合并进 `teachers`；`startTime`、`endTime` 为 `Asia/Shanghai` 时区 RFC 9557 有效起止时间；`startUnit` 与 `endUnit` 从 `1` 起且不限 `10`；`kind` 已知取值为 `"theory"`、`"experiment"`、`"practice"`、`"machine"`、`"design"`；`state` 已知取值为 `"pending"`、`"completed"`（均须容忍未知字符串） |
+| `SessionTeacher` | `id: int64 \| null`、`personId: int64 \| null`、`nameZh: string`、`nameEn: string \| null` | 单场排课的授课教师 |
+| `ExperimentProject` | `id: int64`、`code: string`、`nameZh: string`、`totalPeriods: uint32 \| null` | 实验排课关联的具体实验项目详情 |
+| `Room` | `id: int64`、`nameZh: string`、`nameEn: string \| null`、`building: NamedEntity`、`campus: NamedEntity`、`seatNumber: string \| null` | 上课教室及其所属教学楼与校区 |
 | `NamedEntity` | `id: int64`、`nameZh: string`、`nameEn: string \| null`、`code: string` | 通用教务命名实体 |
+| `CalendarExportOptions` | `weeks?: uint32[] \| null`、`classIds?: int64[] \| null`、`startDate?: "YYYY-MM-DD" \| null`、`endDate?: "YYYY-MM-DD" \| null`、`alarmMinutesBefore?: uint32[]`、`calendarName?: string \| null` | `zzu_timetable_to_calendar` 可选导出配置；`weeks` 不得含 `0`，`startDate` 不得晚于 `endDate` |
 | `ClassroomCatalog` | `campuses: Campus[]`、`buildings: Building[]`、`roomTypes: RoomType[]`、`floors: int32[]` | 教室占用筛选参照目录快照 |
 | `Campus` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`remark: string \| null`、`enabled: boolean` | 校区元数据 |
 | `Building` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`campusId: int64`、`remark: string \| null`、`enabled: boolean` | 教学楼元数据；`campusId` 映射自上游 `campusAssoc`（可能指向未出现在 `campuses` 中的默认校区 ID） |
 | `RoomType` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`enabled: boolean` | 教室类型元数据 |
 | `ClassroomPage` | `items: ClassroomOccupancy[]`、`page: uint32`、`pageSize: uint32`、`totalItems: uint32`、`totalPages: uint32` | 单页教室占用查询结果；`pageSize` 为本次实际使用的页大小，SDK 不应假定其恒为 `44` |
-| `ClassroomOccupancy` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`buildingId: int64`、`campusNameZh: string`、`occupations: RoomOccupation[]` | 教室信息与当日占用列表（无占用时为空数组）；上游未回填的 `floor`、`seatsForLesson`、`enabled`、`virtual`、`experiment`（恒为 `0`/`false`）保留在透传扩展字段中 |
+| `ClassroomOccupancy` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`buildingId: int64`、`campusNameZh: string`、`occupations: RoomOccupation[]` | 教室信息与当日占用列表（无占用时为空数组） |
 | `RoomOccupation` | `activityId: int64 \| null`、`activityType: string`、`activityName: string`、`activityNameEn: string \| null`、`date: "YYYY-MM-DD"`、`startTime: string`、`endTime: string`、`teacherName: string`、`teacherNameEn: string \| null` | 单条教室占用记录；`startTime`、`endTime` 为 `Asia/Shanghai` 时区的 RFC 9557 字符串（左闭右开区间 `[startTime, endTime)`）；`activityType` 已知取值为 `"lesson"`、`"experiment"`、`"room_borrow"`，封装层须容忍上游新增的其他字符串取值 |
 
 ### `ZzuEcardClient`（校园卡与电控）
@@ -410,7 +417,7 @@ zzu_runtime_free(runtime);
 
 | 函数 | 输入字节切片 | 成功结果 JSON | 说明 |
 | --- | --- | --- | --- |
-| `zzu_timetable_to_calendar` | `TeachingWeek[]` 的 UTF-8 JSON 数组；仅导出单周时传入包裹 `teaching_week` 结果的单元素数组 `[week]` | `string`（`.ics` 日历文本） | 结果载荷是 JSON 字符串，落盘为 `.ics` 文件前须先完成 JSON 字符串解码。若 SDK 先将课表反序列化为自定义类型再重序列化传入，不得丢失 `Course` 与 `Schedule` 的必填字段。`DTSTAMP` 取渲染时刻，同一课表多次渲染的输出不会逐字节相同 |
+| `zzu_timetable_to_calendar` | UTF-8 JSON 对象 `{"timetable": Timetable, "options"?: CalendarExportOptions}` | `string`（`.ics` 日历文本） | `timetable` 原样传入 `timetable` 方法的返回值，`options` 可省略。结果载荷是 JSON 字符串，落盘为 `.ics` 文件前须先完成 JSON 字符串解码。`DTSTAMP` 取渲染时刻，同一课表多次渲染的输出不会逐字节相同 |
 | `zzu_room_id_parse` | 原始 UTF-8 房间号文本（**非** JSON 字符串，如直接传 `1-2--3-301` 的 10 个字节） | `string`（如 `"1-2--3-301"`） | 校验房间号是否符合 `area-building--level-room` 格式（四段均非空且不含 `-`）；格式非法返回 `ZZU_INVALID_INPUT` |
 | `zzu_recharge_order_checkout_url_for` | UTF-8 JSON 对象 `{"order": Order, "channel": Channel}` | `string`（HTTPS URL） | 基于 `create_recharge_order` 返回的 `Order` 生成预选该支付渠道的学校网页收银台地址 |
 
