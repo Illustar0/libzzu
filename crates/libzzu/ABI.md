@@ -204,7 +204,7 @@ zzu_runtime_free(runtime);
 - **严进宽出**：
   - **请求与配置拒绝未知字段**：所有带参方法与配置对象默认开启未知字段校验，字段名拼写错误（如误传 `"semester_id"`）会立即返回 `ZZU_INVALID_INPUT`，绝不静默忽略而退回默认值。仅三处例外：无参方法不解析 `params`；`ZzuCasClient` 的 `set_tokens` 忽略多余字段并兼容 `"idToken"` 别名；校园卡支付相关方法的 `order` 字段允许携带 `create_recharge_order` 返回对象中的 `id` 与内部扩展字段。
   - **响应须忽略未知字段**：次版本升级可能在任意响应对象中新增字段，SDK 反序列化时**必须**忽略未知属性。
-- **金额精度**：查询返回的货币金额（如 `balance`、`user_info.balance`）一律编码为精确的十进制字符串（如 `"12.34"`），SDK 须映射为高精度十进制类型（如 `Decimal`、`BigDecimal`），**不得**转换为二进制浮点数。充值参数与面额配置中的 `amount`、`amounts` 单位都是元，不是分，取值为正整数（`uint32`）。
+- **金额精度**：查询返回的货币金额（如 `balance`）一律编码为精确的十进制字符串（如 `"12.34"`），SDK 须映射为高精度十进制类型（如 `Decimal`、`BigDecimal`），**不得**转换为二进制浮点数。充值参数与面额配置中的 `amount`、`amounts` 单位都是元，不是分，取值为正整数（`uint32`）。
 - **日期与带时区时间**：
   - 公历日期采用 `YYYY-MM-DD` 字符串（如 `"2026-10-26"`）。
   - 带时区时间采用 RFC 9557 格式字符串（如 `"2026-10-26T08:00:00+08:00[Asia/Shanghai]"`），小数秒按需输出，最多 9 位（纳秒）；尽管当前课表时间精确到分、在线设备登录时间精确到秒，SDK 解析器仍不应假定不含小数秒。
@@ -267,7 +267,7 @@ zzu_runtime_free(runtime);
 | `send_sms` | 无 | `{"securePhone": string \| null}` | 向绑定安全手机发送短信验证码并返回脱敏手机号。未探测或未初始化时会自动完成 `prepare_sms`；无需 MFA 或不支持短信时返回 `invalid_mfa_state`。发送失败时会保留当前 MFA 会话，避免作废已发验证码；若状态已过期，可调用 `detect_mfa` 重置 |
 | `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验，通过后须再次调用 `login`。未先调用 `send_sms` 时返回 `invalid_mfa_state`；验证码错误返回 `mfa_verification_failed`，并保留当前会话供直接重试；服务端返回非 2xx 或业务失败时自动清空 MFA 状态 |
 | `set_device_trust` | `deviceId: string`、`isTrusted: boolean` | `null` | 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）（需已登录，`deviceId` 不得为空）。`true` 表示信任，`false` 表示取消信任 |
-| `user_info` | 无 | `PersonalInfo` | 查询个人身份信息、未读邮件数、校园卡余额与科研计数（需已登录） |
+| `user_info` | 无 | `PersonalInfo` | 查询个人身份信息（需已登录） |
 | `service_login_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或用户令牌，不得写入日志） |
 
 `Service` 参数取值：
@@ -284,14 +284,9 @@ zzu_runtime_free(runtime);
   "identityTypeName": "身份类别名称 (string)",
   "identityTypeId": "身份类别编码 (string)",
   "organizationName": "所属院系或部门名称 (string)",
-  "organizationId": "所属院系或部门编码 (string)",
-  "unreadEmailCount": 0,
-  "balance": "12.34",
-  "researchCount": 0
+  "organizationId": "所属院系或部门编码 (string)"
 }
 ```
-
-其中 `unreadEmailCount` 与 `researchCount` 为非负整数（`uint64`），`balance` 为十进制金额字符串。
 
 ### `ZzuEasClient`（本科教务）
 

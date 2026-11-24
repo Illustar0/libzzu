@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use futures_util::future::try_join;
 use jiff::Timestamp;
 use reqwest::{Client, Url};
 use rsa::RsaPublicKey;
@@ -16,8 +15,6 @@ const CAS_URL: &str = "https://cas.s.zzu.edu.cn";
 const APP_AGENT: &str = "SWSuperApp/1.1.1()";
 const AUTHX_URL: &str = "https://authx-service.s.zzu.edu.cn";
 const INFO_URL: &str = "https://authx-service.s.zzu.edu.cn/personal/api/v1/personal/me/user";
-const CARDS_URL: &str =
-    "https://info.s.zzu.edu.cn/portal-api/v1/thrid-adapter/get-person-info-card-list";
 const EMAIL_URL: &str = "https://service.s.zzu.edu.cn/portalApi/api/open/email/login";
 const PRESIDENT_MAILBOX_URL: &str = "https://mailbox.v.zzu.edu.cn/mobile/auth2/cas";
 const ECARD_URL: &str = "https://ecard.v.zzu.edu.cn/server/auth/host/open?host=11&org=2";
@@ -671,57 +668,17 @@ impl CasClient {
         }
     }
 
-    /// 查询当前用户的个人身份属性与门户概览卡片数据。
+    /// 查询当前用户的个人身份信息。
     ///
     /// # Errors
     ///
     /// - 客户端尚未登录或令牌不可用时返回 [`Error::Authentication`]。
-    /// - 门户接口请求失败或个人信息卡片结构不符时返回错误。
+    /// - 认证服务接口请求失败、业务状态非零或响应结构不符时返回错误。
     pub async fn user_info(&self) -> Result<PersonalInfo> {
-        #[derive(Deserialize)]
-        struct User {
-            attributes: Attributes,
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Attributes {
-            user_uid: String,
-            user_name: String,
-            identity_type_name: String,
-            identity_type_id: String,
-            organization_name: String,
-            organization_id: String,
-        }
         let token = self.user_token().await?;
-        let (response, cards) = try_join(
-            http::json(self.inner.http.get(INFO_URL).header("X-Id-Token", token)),
-            self.info_cards(),
-        )
-        .await?;
-        let user: User = http::data(response, "code")?;
-        if cards.len() < 3 {
-            return Err(Error::decode_message("个人信息卡片数量不足".into()));
-        }
-        let count = |card: &InfoCard, allow_empty: bool| -> Result<u64> {
-            if allow_empty && card.amount.as_str() == Some("") {
-                return Ok(0);
-            }
-            card.amount
-                .as_u64()
-                .or_else(|| card.amount.as_str().and_then(|text| text.parse().ok()))
-                .ok_or_else(|| Error::decode_message("信息卡片数量必须为非负整数".into()))
-        };
-        Ok(PersonalInfo {
-            uid: user.attributes.user_uid,
-            name: user.attributes.user_name,
-            identity_type_name: user.attributes.identity_type_name,
-            identity_type_id: user.attributes.identity_type_id,
-            organization_name: user.attributes.organization_name,
-            organization_id: user.attributes.organization_id,
-            unread_email_count: count(&cards[0], false)?,
-            balance: http::parse_money(&cards[1].amount, "balance")?,
-            research_count: count(&cards[2], true)?,
-        })
+        let response =
+            http::json(self.inner.http.get(INFO_URL).header("X-Id-Token", token)).await?;
+        parse_user_info(response)
     }
 
     /// 获取当前账号访问指定业务系统 `service` 的单点登录跳转 URL。
@@ -802,13 +759,6 @@ impl CasClient {
         extract_redirect_location(response, system_name)
     }
 
-    async fn info_cards(&self) -> Result<Vec<InfoCard>> {
-        let token = self.user_token().await?;
-        let response =
-            http::json(self.inner.http.get(CARDS_URL).header("X-Id-Token", token)).await?;
-        http::data(response, "code")
-    }
-
     /// 清除本地缓存的令牌、MFA 状态与登录标记。
     ///
     /// 所有共享同一会话的 [`CasClient`] 实例会立即变为未登录状态。
@@ -876,13 +826,34 @@ struct SmsResult {
     _result: Value,
 }
 
-#[derive(Deserialize)]
-pub(crate) struct InfoCard {
-    pub amount: Value,
+fn parse_user_info(response: http::JsonResponse) -> Result<PersonalInfo> {
+    #[derive(Deserialize)]
+    struct User {
+        attributes: Attributes,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Attributes {
+        user_uid: String,
+        user_name: String,
+        identity_type_name: String,
+        identity_type_id: String,
+        organization_name: String,
+        organization_id: String,
+    }
+    let user: User = http::data(response, "code")?;
+    Ok(PersonalInfo {
+        uid: user.attributes.user_uid,
+        name: user.attributes.user_name,
+        identity_type_name: user.attributes.identity_type_name,
+        identity_type_id: user.attributes.identity_type_id,
+        organization_name: user.attributes.organization_name,
+        organization_id: user.attributes.organization_id,
+    })
 }
 
-/// 门户系统返回的个人基础信息与概览统计。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+/// 统一身份认证服务返回的个人基础身份信息。
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PersonalInfo {
     /// 学号或工号（用户唯一标识）。
@@ -897,13 +868,6 @@ pub struct PersonalInfo {
     pub organization_name: String,
     /// 所属院系或组织机构编码。
     pub organization_id: String,
-    /// 未读校园邮件数量。
-    pub unread_email_count: u64,
-    /// 校园卡账户余额（单位：元）。
-    #[serde(deserialize_with = "crate::money::deserialize_decimal")]
-    pub balance: crate::Decimal,
-    /// 科研信息数量。
-    pub research_count: u64,
 }
 
 #[cfg(test)]
@@ -984,5 +948,79 @@ mod tests {
                 .unwrap_err()
                 .is_not_authenticated()
         );
+        assert!(cas.user_info().await.unwrap_err().is_not_authenticated());
+    }
+
+    fn authx_user_response(value: Value) -> http::JsonResponse {
+        http::JsonResponse::new(
+            value,
+            Arc::new(crate::RequestContext {
+                method: "GET".into(),
+                url: INFO_URL.into(),
+                status_code: Some(200),
+                error_code: None,
+                response_body: None,
+            }),
+        )
+    }
+
+    #[test]
+    fn parse_user_info_extracts_authx_attributes_and_serializes_camel_case() {
+        let response = authx_user_response(json!({
+            "code": 0,
+            "data": {
+                "attributes": {
+                    "userUid": "202400000001",
+                    "userName": "张三",
+                    "identityTypeName": "本科生",
+                    "identityTypeId": "1",
+                    "organizationName": "计算机与人工智能学院",
+                    "organizationId": "1001"
+                }
+            }
+        }));
+        let info = parse_user_info(response).unwrap();
+        assert_eq!(
+            info,
+            PersonalInfo {
+                uid: "202400000001".into(),
+                name: "张三".into(),
+                identity_type_name: "本科生".into(),
+                identity_type_id: "1".into(),
+                organization_name: "计算机与人工智能学院".into(),
+                organization_id: "1001".into(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(&info).unwrap(),
+            json!({
+                "uid": "202400000001",
+                "name": "张三",
+                "identityTypeName": "本科生",
+                "identityTypeId": "1",
+                "organizationName": "计算机与人工智能学院",
+                "organizationId": "1001"
+            })
+        );
+    }
+
+    #[test]
+    fn parse_user_info_surfaces_remote_and_decode_errors_with_context() {
+        let remote_failure = authx_user_response(json!({
+            "code": 401,
+            "message": "登录已失效"
+        }));
+        let error = parse_user_info(remote_failure).unwrap_err();
+        assert!(error.is_remote());
+        assert_eq!(error.message(), "登录已失效");
+        assert!(error.request().is_some());
+
+        let missing_attributes = authx_user_response(json!({
+            "code": 0,
+            "data": {}
+        }));
+        let error = parse_user_info(missing_attributes).unwrap_err();
+        assert!(error.is_decode());
+        assert!(error.request().is_some());
     }
 }
