@@ -159,6 +159,11 @@ mod tests {
     fn sm4_decrypt_uses_ascii_key_bytes() {
         let key = random_sm4_key();
         assert_eq!(key.len(), 16);
+        assert!(key.bytes().all(|byte| SM4_KEY_ALPHABET.contains(&byte)));
+        assert_eq!(
+            hex::encode("rx4EG_5ziW3YMjZt".as_bytes()),
+            "72783445475f357a695733594d6a5a74"
+        );
         let plaintext = br#"{"success":true}"#;
         let key_bytes: &[u8; 16] = key.as_bytes().try_into().unwrap();
         let ciphertext = ecb::Encryptor::<sm4::Sm4>::new(key_bytes.into())
@@ -167,6 +172,7 @@ mod tests {
             sm4_decrypt(&STANDARD.encode(ciphertext), &key).unwrap(),
             plaintext
         );
+        assert!(sm4_decrypt("", &key).is_err());
         assert!(sm4_decrypt("AA==", &key).is_err());
         assert!(sm4_decrypt("AA==", "short").is_err());
     }

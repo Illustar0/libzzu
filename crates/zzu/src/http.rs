@@ -177,6 +177,20 @@ impl Deref for JsonResponse {
 }
 
 impl JsonResponse {
+    #[cfg(test)]
+    pub(crate) fn new(value: Value, context: Arc<RequestContext>) -> Self {
+        Self { value, context }
+    }
+
+    pub fn map_value(self, transform: impl FnOnce(&Value) -> Result<Value>) -> Result<Self> {
+        let value =
+            transform(&self.value).map_err(|error| error.with_request(self.context.clone()))?;
+        Ok(Self {
+            value,
+            context: self.context,
+        })
+    }
+
     pub fn decode<T: DeserializeOwned>(self) -> Result<T> {
         serde_json::from_value(self.value)
             .map_err(|error| Error::from(error).with_request(self.context))

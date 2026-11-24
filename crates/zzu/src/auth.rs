@@ -802,7 +802,7 @@ impl CasClient {
         extract_redirect_location(response, system_name)
     }
 
-    pub(crate) async fn info_cards(&self) -> Result<Vec<InfoCard>> {
+    async fn info_cards(&self) -> Result<Vec<InfoCard>> {
         let token = self.user_token().await?;
         let response =
             http::json(self.inner.http.get(CARDS_URL).header("X-Id-Token", token)).await?;

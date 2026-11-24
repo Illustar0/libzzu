@@ -249,15 +249,24 @@ impl EcardClient {
     ///
     /// # Errors
     ///
-    /// - 客户端尚未登录或底层 CAS 会话未认证时返回 [`Error::Authentication`]。
-    /// - 门户信息卡片查询失败或余额字段不是合法十进制金额时返回错误。
+    /// - 客户端尚未登录或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
+    /// - 获取临时公钥、SM2/SM4 加解密、网络请求、远端业务校验或余额字段解析失败时返回错误。
     pub async fn balance(&self) -> Result<crate::Decimal> {
-        self.access_token().await?;
-        let cards = self.cas.info_cards().await?;
-        let card = cards
-            .get(1)
-            .ok_or_else(|| Error::decode_message("个人信息缺少余额卡片".into()))?;
-        http::parse_money(&card.amount, "balance")
+        let token = self.access_token().await?;
+        let encryption = self.encryption(&token).await?;
+        let encrypt_id = encryption.id_header()?;
+        let sm4_key = crypto::random_sm4_key();
+        let encrypted_sm4_key = crypto::sm2_encrypt(&encryption.public_key, sm4_key.as_bytes())?;
+        let response = http::json(
+            self.http
+                .post(format!("{ECARD_URL}/user/info"))
+                .header("Authorization", token)
+                .header("X-Encrypt-Id", encrypt_id)
+                .header("X-Sm4-Key", encrypted_sm4_key)
+                .header("Content-Type", "application/json"),
+        )
+        .await?;
+        parse_balance_response(response, &sm4_key)
     }
 
     /// 按上级位置编码逐级检索电控位置目录，返回 `id -> 名称` 的有序映射。
@@ -355,12 +364,6 @@ impl EcardClient {
         amount: u32,
         room: &RoomId,
     ) -> Result<()> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Encryption {
-            id: Value,
-            public_key: String,
-        }
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Payment<'a> {
@@ -378,13 +381,7 @@ impl EcardClient {
             ));
         }
         let token = self.access_token().await?;
-        let request = self
-            .http
-            .post(format!("{ECARD_URL}/auth/getEncrypt"))
-            .header("Authorization", &token)
-            .json(&json!({"protocolVersion":2}));
-        let response = http::json(request).await?;
-        let encryption: Encryption = http::ecard_data(response)?;
+        let encryption = self.encryption(&token).await?;
         let payment = Payment {
             location: room.location(),
             pay_code: "06",
@@ -408,17 +405,32 @@ impl EcardClient {
                 .json(&body),
         )
         .await?;
+        let response = response.map_value(|body| decrypt_response(body, &sm4_key))?;
         let context = response.context.clone();
-        let result = decrypt_response(&response, &sm4_key)
-            .map_err(|error| error.with_request(context.clone()))?;
-        match result.get("success").and_then(Value::as_bool) {
+        match response.get("success").and_then(Value::as_bool) {
             Some(true) => Ok(()),
-            Some(false) => Err(Error::remote(http::message(&result)).with_request(context)),
+            Some(false) => Err(Error::remote(http::message(&response)).with_request(context)),
             None => Err(Error::decode_message(
                 "充值响应缺少 success，支付结果未知，请查询余额后再决定是否重试".into(),
             )
             .with_request(context)),
         }
+    }
+
+    /// 申请服务端临时 SM2 公钥与加密会话标识（`POST /auth/getEncrypt`）。
+    async fn encryption(&self, token: &str) -> Result<Encryption> {
+        let request = self
+            .http
+            .post(format!("{ECARD_URL}/auth/getEncrypt"))
+            .header("Authorization", token)
+            .json(&json!({"protocolVersion":2}));
+        let response = http::json(request).await?;
+        let context = response.context.clone();
+        let encryption: Encryption = http::ecard_data(response)?;
+        encryption
+            .id_header()
+            .map_err(|error| error.with_request(context))?;
+        Ok(encryption)
     }
 
     /// 申请 `/utilities/pay`、`/recharge/pay` 等扣款接口请求头 `transactionId` 所需的一次性交易号。
@@ -445,6 +457,43 @@ impl EcardClient {
     pub fn logout(&mut self) {
         *self.lock_state() = EcardState::default();
     }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Encryption {
+    id: Value,
+    public_key: String,
+}
+
+impl Encryption {
+    /// 将 `getEncrypt` 返回的 `id` 转为 `X-Encrypt-Id` 请求头值，避免对 JSON 字符串二次加引号。
+    fn id_header(&self) -> Result<String> {
+        match &self.id {
+            Value::String(id) if !id.is_empty() => Ok(id.clone()),
+            Value::Number(id) => Ok(id.to_string()),
+            _ => Err(Error::decode_message("加密配置缺少有效的 id".into())),
+        }
+    }
+}
+
+/// 解密并解析 `/user/info` 响应中的校园卡余额（单位：元）。
+fn parse_balance_response(response: http::JsonResponse, sm4_key: &str) -> Result<crate::Decimal> {
+    #[derive(Deserialize)]
+    struct UserInfo {
+        user: Option<User>,
+    }
+    #[derive(Deserialize)]
+    struct User {
+        balance: Value,
+    }
+    let response = response.map_value(|body| decrypt_response(body, sm4_key))?;
+    let context = response.context.clone();
+    let info: UserInfo = http::ecard_data(response)?;
+    let user = info.user.ok_or_else(|| {
+        Error::decode_message("校园卡用户信息缺少 user".into()).with_request(context.clone())
+    })?;
+    http::parse_money(&user.balance, "balance").map_err(|error| error.with_request(context))
 }
 
 /// 还原校园卡加密响应：与前端一致，`success` 不为 `true` 且带非空 `data` 时，用请求时生成的 SM4 密钥解密 `data` 得到实际响应。
@@ -571,7 +620,34 @@ fn location_query(parent: &str) -> Result<LocationRequest<'_>> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use ecb::cipher::{BlockEncryptMut, KeyInit, block_padding::Pkcs7};
+
     use super::*;
+    use crate::RequestContext;
+
+    fn user_info_response(value: Value) -> http::JsonResponse {
+        http::JsonResponse::new(
+            value,
+            Arc::new(RequestContext {
+                method: "POST".into(),
+                url: format!("{ECARD_URL}/user/info"),
+                status_code: Some(200),
+                error_code: None,
+                response_body: None,
+            }),
+        )
+    }
+
+    fn encrypt_payload(payload: &Value, sm4_key: &str) -> Value {
+        let key_bytes: &[u8; 16] = sm4_key.as_bytes().try_into().unwrap();
+        let plaintext = serde_json::to_vec(payload).unwrap();
+        let ciphertext = ecb::Encryptor::<sm4::Sm4>::new(key_bytes.into())
+            .encrypt_padded_vec_mut::<Pkcs7>(&plaintext);
+        json!({"data": STANDARD.encode(ciphertext)})
+    }
 
     #[test]
     fn room_and_location_ids_are_validated_before_requests() {
@@ -607,5 +683,102 @@ mod tests {
             );
         }
         assert!(location_query("1-2-3").is_err());
+    }
+
+    #[test]
+    fn encryption_id_header_formats_scalars_and_rejects_invalid_values() {
+        let string_id = Encryption {
+            id: json!("JebRGi53Oy4ZwgO4Q-YqH"),
+            public_key: String::new(),
+        };
+        assert_eq!(string_id.id_header().unwrap(), "JebRGi53Oy4ZwgO4Q-YqH");
+
+        let numeric_id = Encryption {
+            id: json!(42),
+            public_key: String::new(),
+        };
+        assert_eq!(numeric_id.id_header().unwrap(), "42");
+
+        for invalid in [json!(""), json!(null), json!(true), json!({})] {
+            let encryption = Encryption {
+                id: invalid,
+                public_key: String::new(),
+            };
+            assert!(encryption.id_header().unwrap_err().is_decode());
+        }
+    }
+
+    #[test]
+    fn balance_response_decrypts_sm4_payload_and_parses_decimal() {
+        let key = crypto::random_sm4_key();
+        let payload = json!({
+            "success": true,
+            "message": "成功",
+            "resultData": {
+                "balanceLessRecharge": false,
+                "user": {
+                    "balance": "10.46",
+                    "mainblance": 1046,
+                    "subblance": 0,
+                    "accTypes": [{"typeCode": "0", "typeName": "主账户", "balance": "10.46"}],
+                },
+                "merchant": null,
+                "merchantAdmin": null,
+            },
+            "code": "",
+        });
+        let encrypted = user_info_response(encrypt_payload(&payload, &key));
+        assert_eq!(
+            parse_balance_response(encrypted, &key).unwrap().to_string(),
+            "10.46"
+        );
+
+        let plaintext = user_info_response(json!({
+            "success": true,
+            "resultData": {"user": {"balance": "0.00"}},
+        }));
+        assert_eq!(
+            parse_balance_response(plaintext, &key).unwrap().to_string(),
+            "0.00"
+        );
+    }
+
+    #[test]
+    fn balance_response_surfaces_remote_crypto_and_decode_errors_with_context() {
+        let key = "AbCdEf012345_+-=";
+        let other_key = "rx4EG_5ziW3YMjZt";
+
+        let remote_failure = user_info_response(encrypt_payload(
+            &json!({"success": false, "message": "会话已过期", "code": "401"}),
+            key,
+        ));
+        let error = parse_balance_response(remote_failure, key).unwrap_err();
+        assert!(error.is_remote());
+        assert_eq!(error.message(), "会话已过期");
+        assert!(error.request().is_some());
+
+        let wrong_key_payload = user_info_response(encrypt_payload(
+            &json!({"success": true, "resultData": {"user": {"balance": "10.46"}}}),
+            key,
+        ));
+        let error = parse_balance_response(wrong_key_payload, other_key).unwrap_err();
+        assert!(error.is_crypto());
+        assert!(error.request().is_some());
+
+        let missing_user = user_info_response(encrypt_payload(
+            &json!({"success": true, "resultData": {"user": null}}),
+            key,
+        ));
+        let error = parse_balance_response(missing_user, key).unwrap_err();
+        assert!(error.is_decode());
+        assert!(error.request().is_some());
+
+        let invalid_balance = user_info_response(encrypt_payload(
+            &json!({"success": true, "resultData": {"user": {"balance": "NaN"}}}),
+            key,
+        ));
+        let error = parse_balance_response(invalid_balance, key).unwrap_err();
+        assert!(error.is_decode());
+        assert!(error.request().is_some());
     }
 }
