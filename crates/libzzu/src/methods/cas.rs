@@ -63,6 +63,7 @@ impl ClientService for CasClient {
                 done()
             }
             "is_logged_in" => reply(&self.is_logged_in().await),
+            "device_id" => reply(self.device_id()),
             "set_tokens" => {
                 self.set_tokens(parse::<Tokens>(params)?).await?;
                 done()

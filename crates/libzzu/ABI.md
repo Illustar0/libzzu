@@ -264,6 +264,7 @@ zzu_runtime_free(runtime);
 | `reauthenticate` | 无 | `null` | 清除本地缓存的令牌与 MFA 状态，强制重新执行完整密码认证 |
 | `logout` | 无 | `null` | 清空本地令牌、MFA 状态与登录标记；共享该会话的教务、校园卡与校园邮箱客户端在下次读取 CAS 令牌时将收到 `not_authenticated` |
 | `is_logged_in` | 无 | `boolean` | 返回当前 CAS 会话是否处于已登录状态 |
+| `device_id` | 无 | `string` | 返回创建客户端时配置的设备 ID |
 | `set_tokens` | `userToken: string`（兼容别名 `idToken`）、`refreshToken: string` | `null` | 预置外部持久化的 JWT 令牌对并重置登录态，调用后**仍须调用 `login`** 激活会话。若令牌格式非法或已过期，返回 `ZZU_INVALID_INPUT` 而非 `token_expired` |
 | `tokens` | 无 | `{"userToken": string, "refreshToken": string} \| null` | 读取当前缓存的令牌对；未设置且未登录时返回 `null` |
 | `user_token` | 无 | `string` | 本地校验并返回可用的 `userToken`；未登录返回 `not_authenticated`，剩余有效期不足 15 分钟或 `refreshToken` 已过期返回 `token_expired` |

@@ -450,6 +450,10 @@ mod tests {
     fn async_and_blocking_calls_share_results_and_error_payloads() {
         let fixture = Fixture::new();
         for call in [call_cas, call_cas_blocking] {
+            assert_eq!(
+                call(fixture.cas, c"device_id", b""),
+                (ZZU_OK, json!("test-device"))
+            );
             assert_eq!(call(fixture.cas, c"tokens", b""), (ZZU_OK, Value::Null));
             let (status, error) = call(fixture.cas, c"user_token", b"");
             assert_eq!(status, ZZU_AUTHENTICATION_ERROR);

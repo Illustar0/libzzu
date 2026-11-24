@@ -240,6 +240,12 @@ impl CasClient {
         })
     }
 
+    /// 返回创建客户端时配置的设备 ID。
+    #[must_use]
+    pub fn device_id(&self) -> &str {
+        &self.inner.device_id
+    }
+
     /// 预置外部持久化的认证令牌对，并重置会话的登录与 MFA 状态。
     ///
     /// 预置后仍须调用 [`Self::login`] 激活会话；若令牌尚在可复用有效期内，[`Self::login`] 会直接复用，不发起密码登录请求。
@@ -927,6 +933,14 @@ mod tests {
         }
         let source = serde_json::from_str::<Value>("invalid JSON").unwrap_err();
         assert!(password_login_error(Error::from(source)).is_decode());
+    }
+
+    #[test]
+    fn device_id_returns_configured_value() {
+        let cas = CasClient::new("", "", "test-device").unwrap();
+        let other = cas.clone();
+        assert_eq!(cas.device_id(), "test-device");
+        assert_eq!(other.device_id(), "test-device");
     }
 
     #[tokio::test]
