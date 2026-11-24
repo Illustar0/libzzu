@@ -43,7 +43,7 @@ struct SetDeviceTrust {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ServiceLogin {
+struct ServiceSso {
     service: Service,
 }
 
@@ -86,9 +86,9 @@ impl ClientService for CasClient {
                 done()
             }
             "user_info" => reply(&self.user_info().await?),
-            "service_login_url" => {
-                let ServiceLogin { service } = parse(params)?;
-                reply(&self.service_login_url(service).await?)
+            "service_sso_url" => {
+                let ServiceSso { service } = parse(params)?;
+                reply(&self.service_sso_url(service).await?)
             }
             _ => Err(FfiError::UnknownMethod(method.into())),
         }

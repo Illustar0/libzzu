@@ -140,7 +140,7 @@ zzu_runtime_free(runtime);
     - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话与默认房间缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
-  - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_login_url` 在读取令牌并释放会话锁后并发执行网络请求。
+  - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_sso_url` 在读取令牌并释放会话锁后并发执行网络请求。
   - **无状态全并发（`ZzuPortalClient`）**：无可变会话状态，所有调用完全并发执行。
 - **回调执行约束**：`ZzuCallback` 运行在名为 `zzu-worker` 的后台工作线程上，须尽快返回，以免阻塞运行时调度。回调必须使用 C 调用约定，**严禁**让 C++ 异常、托管异常或 Rust panic 越过 FFI 边界向外栈展开。回调内除不得调用 `*_blocking` 函数外，可自由调用 `zzu_buffer_*`、`zzu_*_free`、`zzu_*_call` 及本地纯函数。
 - **单次操作总时限（`timeoutMs`）**：客户端与 `zzu_portal_discover` 配置中的 `timeoutMs` 为单次操作端到端总时限（含等待客户端读写锁、会话锁或令牌换新锁的排队耗时及内部多次 HTTP 往返），默认值为 `15000` 毫秒，须为正整数（传 `0` 返回 `ZZU_INVALID_INPUT`）。超时后操作中止并返回 `ZZU_TIMEOUT`。库内不设其他隐式请求超时。
@@ -273,7 +273,7 @@ zzu_runtime_free(runtime);
 | `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验，通过后须再次调用 `login`。未先调用 `send_sms` 时返回 `invalid_mfa_state`；验证码错误返回 `mfa_verification_failed`，并保留当前会话供直接重试；服务端返回非 2xx 或业务失败时自动清空 MFA 状态 |
 | `set_device_trust` | `deviceId: string`、`isTrusted: boolean` | `null` | 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）（需已登录，`deviceId` 不得为空）。`true` 表示信任，`false` 表示取消信任 |
 | `user_info` | 无 | `PersonalInfo` | 查询个人身份信息（需已登录） |
-| `service_login_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或用户令牌，不得写入日志） |
+| `service_sso_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或用户令牌，不得写入日志） |
 
 `Service` 参数取值：
 
