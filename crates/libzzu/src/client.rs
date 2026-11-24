@@ -281,11 +281,12 @@ mod tests {
     use super::*;
     use crate::{
         ZZU_AUTHENTICATION_ERROR, ZZU_PANIC, ZZU_TIMEOUT, ZZU_UNKNOWN_METHOD, ZzuCasClient,
-        ZzuEasClient, ZzuEcardClient, ZzuRuntime, zzu_buffer_data, zzu_buffer_free, zzu_buffer_len,
-        zzu_cas_call, zzu_cas_call_blocking, zzu_cas_free, zzu_cas_new, zzu_eas_call, zzu_eas_free,
-        zzu_eas_new, zzu_ecard_call, zzu_ecard_free, zzu_ecard_new, zzu_portal_discover_blocking,
-        zzu_recharge_order_checkout_url_for, zzu_room_id_parse, zzu_runtime_free, zzu_runtime_new,
-        zzu_timetable_to_calendar,
+        ZzuEasClient, ZzuEcardClient, ZzuMailClient, ZzuRuntime, zzu_buffer_data, zzu_buffer_free,
+        zzu_buffer_len, zzu_cas_call, zzu_cas_call_blocking, zzu_cas_free, zzu_cas_new,
+        zzu_eas_call, zzu_eas_free, zzu_eas_new, zzu_ecard_call, zzu_ecard_free, zzu_ecard_new,
+        zzu_mail_call, zzu_mail_call_blocking, zzu_mail_free, zzu_mail_new,
+        zzu_portal_discover_blocking, zzu_recharge_order_checkout_url_for, zzu_room_id_parse,
+        zzu_runtime_free, zzu_runtime_new, zzu_timetable_to_calendar,
     };
 
     type Completion = (ZzuStatus, Value);
@@ -413,6 +414,14 @@ mod tests {
             assert_eq!(status, ZZU_OK);
             ecard
         }
+
+        fn mail(&self) -> *mut ZzuMailClient {
+            let mut mail = ptr::null_mut();
+            // SAFETY: The CAS handle is live and the output slot is writable.
+            let status = unsafe { zzu_mail_new(self.cas, &raw mut mail, ptr::null_mut()) };
+            assert_eq!(status, ZZU_OK);
+            mail
+        }
     }
 
     impl Drop for Fixture {
@@ -452,10 +461,11 @@ mod tests {
     }
 
     #[test]
-    fn eas_and_ecard_share_the_cas_session_and_outlive_its_handle() {
+    fn eas_ecard_and_mail_share_the_cas_session_and_outlive_its_handle() {
         let fixture = Fixture::new();
         let eas = fixture.eas();
         let ecard = fixture.ecard();
+        let mail = fixture.mail();
         drop(fixture);
         let (status, error) = call_async(zzu_eas_call, eas, c"login", b"");
         assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
@@ -463,10 +473,29 @@ mod tests {
         let (status, error) = call_async(zzu_ecard_call, ecard, c"balance", b"");
         assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
         assert_eq!(error["kind"], "not_authenticated");
-        // SAFETY: Both handles came from their constructors and are released once.
+
+        assert_eq!(
+            call_async(zzu_mail_call, mail, c"is_logged_in", b""),
+            (ZZU_OK, json!(false))
+        );
+        for method in [c"login", c"webmail_url", c"unread_count"] {
+            let (status, error) = call_async(zzu_mail_call, mail, method, b"");
+            assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
+            assert_eq!(error["kind"], "not_authenticated");
+        }
+        let mut payload = ptr::null_mut();
+        // SAFETY: The mail handle and method name are live; the output slot is writable.
+        let status = unsafe {
+            zzu_mail_call_blocking(mail, c"unknown".as_ptr(), ptr::null(), 0, &raw mut payload)
+        };
+        assert_eq!(status, ZZU_UNKNOWN_METHOD);
+        assert_eq!(take_payload(payload)["status"], json!(ZZU_UNKNOWN_METHOD));
+
+        // SAFETY: All three handles came from their constructors and are released once.
         unsafe {
             zzu_eas_free(eas);
             zzu_ecard_free(ecard);
+            zzu_mail_free(mail);
         }
     }
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository implements the campus services SDK for a University, providing unified client access to campus-wide integrated authentication (CAS & MFA), undergraduate academic affairs and timetables (`eas`), campus e-card and dorm electricity services (`ecard`), and campus network portal & self-service (`network`).
+This repository implements the campus services SDK for a University, providing unified client access to campus-wide integrated authentication (CAS & MFA), undergraduate academic affairs and timetables (`eas`), campus e-card and dorm electricity services (`ecard`), campus email (`mail`), and campus network portal & self-service (`network`).
 
 ## Workspace Structure
 

@@ -8,17 +8,18 @@
 
 ### 句柄拓扑与符号设计
 
-`libzzu` 的不透明句柄与 `zzu` 中的领域客户端一一对应，不合并为单一聚合客户端。各服务的认证前提与生命周期彼此独立：本科教务（`ZzuEasClient`）与校园卡（`ZzuEcardClient`）派生自统一身份认证客户端（`ZzuCasClient`），共享其认证会话、后台运行时与操作时限；校园网 Portal（`ZzuPortalClient`）与自助服务（`ZzuSelfServiceClient`）则直接挂载在运行时（`ZzuRuntime`）下，不依赖 CAS 账号。上层 SDK 封装应保持这一类型结构。
+`libzzu` 的不透明句柄与 `zzu` 中的领域客户端一一对应，不合并为单一聚合客户端。各服务的认证前提与生命周期彼此独立：本科教务（`ZzuEasClient`）、校园卡（`ZzuEcardClient`）与校园邮箱（`ZzuMailClient`）派生自统一身份认证客户端（`ZzuCasClient`），共享其认证会话、后台运行时与操作时限；校园网 Portal（`ZzuPortalClient`）与自助服务（`ZzuSelfServiceClient`）则直接挂载在运行时（`ZzuRuntime`）下，不依赖 CAS 账号。上层 SDK 封装应保持这一类型结构。
 
 ```text
 ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_new
-            │                        └─ zzu_ecard_new
+            │                        ├─ zzu_ecard_new
+            │                        └─ zzu_mail_new
             ├─ zzu_portal_new
             ├─ zzu_self_service_new
             └─ zzu_portal_discover / zzu_portal_discover_blocking
 ```
 
-整套 ABI 共导出 34 个 C 函数（Android 平台另导出 1 个 JNI 初始化符号），遵循以下边界约束：
+整套 ABI 共导出 38 个 C 函数（Android 平台另导出 1 个 JNI 初始化符号），遵循以下边界约束：
 
 - **零结构体跨界**：所有导出函数的签名仅使用 `int32_t`、`uint32_t`、`size_t`、指针与单一回调类型 `ZzuCallback`。不传递结构体值，也不暴露结构体内存布局或 C `bool`（避免 .NET 默认 4 字节布尔封送及跨平台对齐差异）。
 - **定宽状态码**：`ZzuStatus` 定义为 `int32_t` 类型别名而非 C `enum`，消除编译器枚举底层宽度差异，并允许次版本新增状态码而不触发跨语言枚举反序列化未定义行为。
@@ -32,6 +33,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、个人信息与业务系统单点登录 |
 | 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、学期课表与教室占用查询 |
 | 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、宿舍电费查询与充值、校园卡充值下单 |
+| 校园邮箱客户端 | `zzu_mail_new`、`zzu_mail_free`、`zzu_mail_call`、`zzu_mail_call_blocking` | 校园邮箱会话登录、网页版入口地址与收件箱未读邮件数查询 |
 | Portal 探测 | `zzu_portal_discover`、`zzu_portal_discover_blocking` | 自动探测当前网络下的校园网 Portal 地址与本机内网 IP |
 | Portal 客户端 | `zzu_portal_new`、`zzu_portal_free`、`zzu_portal_call`、`zzu_portal_call_blocking` | 校园网 `eportal` 终端上线认证 |
 | 自助服务客户端 | `zzu_self_service_new`、`zzu_self_service_free`、`zzu_self_service_call`、`zzu_self_service_call_blocking` | 校园网在线终端列表查询与强制下线 |
@@ -75,7 +77,7 @@ uint32_t minor = version & 0xFFFF;
 
 - `out_*` 句柄输出槽位**必须**非空（传 `NULL` 返回 `ZZU_INVALID_INPUT`）。函数入口处会先将 `*out_*` 置为 `NULL`；返回 `ZZU_OK` 时写入有效句柄，失败时保持 `NULL`。
 - `out_error` 错误输出槽位可传 `NULL`。若非空，成功时置为 `NULL`，失败时写入含错误 JSON 的 `ZzuBuffer *`（须通过 `zzu_buffer_free` 释放）。
-- 运行时、客户端会话与在途任务之间通过原子引用计数维护生命周期，各句柄可按**任意顺序**释放：释放 `ZzuCasClient` 不影响已派生的 `ZzuEasClient` 与 `ZzuEcardClient`；释放客户端或 `ZzuRuntime` 不会中断在途调用，底层工作线程池会在最后一个客户端句柄与最后一个在途任务均结束后自动在后台关闭。
+- 运行时、客户端会话与在途任务之间通过原子引用计数维护生命周期，各句柄可按**任意顺序**释放：释放 `ZzuCasClient` 不影响已派生的 `ZzuEasClient`、`ZzuEcardClient` 与 `ZzuMailClient`；释放客户端或 `ZzuRuntime` 不会中断在途调用，底层工作线程池会在最后一个客户端句柄与最后一个在途任务均结束后自动在后台关闭。
 
 #### 2. 异步调用（`zzu_*_call`、`zzu_portal_discover`）
 
@@ -133,16 +135,17 @@ zzu_runtime_free(runtime);
 ## 并发、时限与取消
 
 - **线程安全与读写并发**：所有导出函数均支持多线程并发调用。各客户端按状态可变性采用不同的内部同步策略：
-  - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
+  - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuMailClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
     - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`timetable`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
     - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话与默认房间缓存时短暂持状态锁，释放锁后再发网络请求）。
+    - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
-  - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_login_url` 在读取令牌并释放会话锁后并发执行网络请求。
+  - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_login_url` 在读取令牌并释放会话锁后并发执行网络请求。
   - **无状态全并发（`ZzuPortalClient`）**：无可变会话状态，所有调用完全并发执行。
 - **回调执行约束**：`ZzuCallback` 运行在名为 `zzu-worker` 的后台工作线程上，须尽快返回，以免阻塞运行时调度。回调必须使用 C 调用约定，**严禁**让 C++ 异常、托管异常或 Rust panic 越过 FFI 边界向外栈展开。回调内除不得调用 `*_blocking` 函数外，可自由调用 `zzu_buffer_*`、`zzu_*_free`、`zzu_*_call` 及本地纯函数。
 - **单次操作总时限（`timeoutMs`）**：客户端与 `zzu_portal_discover` 配置中的 `timeoutMs` 为单次操作端到端总时限（含等待客户端读写锁、会话锁或令牌换新锁的排队耗时及内部多次 HTTP 往返），默认值为 `15000` 毫秒，须为正整数（传 `0` 返回 `ZZU_INVALID_INPUT`）。超时后操作中止并返回 `ZZU_TIMEOUT`。库内不设其他隐式请求超时。
 - **尽力而为取消（`zzu_call_cancel`）**：可在任意线程对有效 `ZzuCall` 重复调用；若操作已结束则为空操作。调用取消后，异步回调依然保证触发一次，状态码通常为 `ZZU_CANCELLED`，若完成与取消发生竞态也可能收到真实执行结果。注意：调用 `zzu_call_free` 仅释放句柄内存，**不会**取消操作。对 `recharge_energy` 等非幂等写操作发起取消或遇到超时后，服务端可能已受理扣款，应用层须先查询余额核实状态，切勿盲目自动重试。
-- **Panic 隔离与服务损坏**：本库在所有 FFI 入口与异步任务边界捕获 Rust panic 并转换为 `ZZU_PANIC`，绝不向宿主进程展开栈。若 `ZzuEasClient`、`ZzuEcardClient` 或 `ZzuSelfServiceClient` 在持有内部读写锁（无论共享读锁还是独占写锁）期间发生 panic，该客户端实例会标记为已损坏（poisoned），后续一切读写调用均直接返回 `ZZU_PANIC`，调用方须释放该句柄并重新创建。
+- **Panic 隔离与服务损坏**：本库在所有 FFI 入口与异步任务边界捕获 Rust panic 并转换为 `ZZU_PANIC`，绝不向宿主进程展开栈。若 `ZzuEasClient`、`ZzuEcardClient`、`ZzuMailClient` 或 `ZzuSelfServiceClient` 在持有内部读写锁（无论共享读锁还是独占写锁）期间发生 panic，该客户端实例会标记为已损坏（poisoned），后续一切读写调用均直接返回 `ZZU_PANIC`，调用方须释放该句柄并重新创建。
 - **`fork` 限制**：`ZzuRuntime` 内部持有操作系统工作线程池与 I/O 轮询句柄，不具备 `fork` 安全性。使用 `fork` 创建子进程时，须在 `fork` 之后再加载并初始化 `ZzuRuntime`。
 
 ---
@@ -219,18 +222,19 @@ zzu_runtime_free(runtime);
 | --- | --- |
 | CAS 密码加密登录、短信 MFA 状态机与读写并发同步 | 选择安全凭据存储（Keychain、Keystore 等）持久化令牌对 |
 | 校验 JWT 结构与过期时间，在令牌不可用时返回 `token_expired` | 应用启动时恢复令牌，决定何时触发重新登录或弹出 MFA 界面 |
-| 校园卡 `access_token` 超时或 CAS 令牌变更时按需合并换新 | 处理非幂等操作异常后的余额核实与用户提示 |
+| 校园卡 `access_token` 与校园邮箱 `sid` 过期或 CAS 令牌变更时按需合并换新 | 处理非幂等操作异常后的余额核实与用户提示 |
 
 - **无隐式后台行为**：本库不启动任何后台保活或定时刷新任务，也**绝不会**在业务调用遇到令牌失效时隐式使用缓存密码重登——密码重登可能挤掉用户在手机端官方 App 的登录态，必须由应用层显式调用 `login` 或 `reauthenticate` 触发。
 - **令牌持久化与恢复**：CAS 令牌仅在调用 `login`、`reauthenticate`、`set_tokens`、`logout` 时发生变更；应用可在这些调用完成后读取 `tokens` 并存入系统安全存储。进程重启恢复会话时，依次调用 `set_tokens` 与 `login`：只要预置令牌仍在可复用有效期内，`login` 会直接激活本地登录态，不发起任何网络请求。
-- **`token_expired` 判定规则**：已登录会话中，当 `userToken` 剩余有效期不足 15 分钟、`refreshToken` 已过期，或无法从 JWT 解析过期时间时，`user_token` 及所有依赖它的教务、校园卡、个人信息与业务系统单点登录方法均返回 `ZZU_AUTHENTICATION_ERROR`（`kind: "token_expired"`）。该检查纯属本地时间校验；若服务端提前吊销了未过期的令牌，远端接口会返回认证或业务错误。重新调用 `login` 时仍可能触发 `mfa_required`，处理流程与首次登录一致。
+- **`token_expired` 判定规则**：已登录会话中，当 `userToken` 剩余有效期不足 15 分钟、`refreshToken` 已过期，或无法从 JWT 解析过期时间时，`user_token` 及所有依赖它的教务、校园卡、校园邮箱、个人信息与业务系统单点登录方法均返回 `ZZU_AUTHENTICATION_ERROR`（`kind: "token_expired"`）。该检查纯属本地时间校验；若服务端提前吊销了未过期的令牌，远端接口会返回认证或业务错误。重新调用 `login` 时仍可能触发 `mfa_required`，处理流程与首次登录一致。
 - **校园卡会话换新与并发合并**：校园卡客户端完成 `login` 后，在每次业务请求前短暂读取缓存校验内部 `access_token`，拿到可用令牌后立即释放状态锁再发起业务请求。若距上次换取已满 45 分钟（经验阈值）或底层 CAS `userToken` 已更新，内部通过独立的异步换新锁将并发换新合并为单次令牌交换（不消耗密码），多个等待中的请求直接复用同一次换新结果；若换新请求中途超时或被取消，换新锁自动释放，后续请求可继续正常触发换新。若此时底层 CAS 令牌本身已不可用，则不会换新，即使校园卡会话未满 45 分钟也直接返回 `token_expired`。
+- **校园邮箱会话换新与并发合并**：校园邮箱客户端完成 `login` 后，缓存网页版入口地址与 `sid`。每次调用 `webmail_url` 或 `unread_count` 前会校验底层 CAS `userToken` 与缓存新鲜度（20 分钟经验阈值）；若会话超期、底层 CAS `userToken` 已更新，或 `unread_count` 收到服务端会话失效响应（`FA_INVALID_SESSION`、`FA_INVALID_TEMP_SESSION` 或 `FA_SECURITY`），内部通过异步换新锁合并换新会话（不消耗密码）并自动重试一次查询。若底层 CAS 令牌已不可用，直接返回 `token_expired`。
 
 ---
 
 ## 初始化配置
 
-除 `zzu_eas_new` 与 `zzu_ecard_new` 直接沿用 `ZzuCasClient` 的运行时和 `timeoutMs` 外，其余构造函数及 Portal 探测函数均接收 UTF-8 JSON 配置对象（字段名后带 `?` 表示可选）：
+除 `zzu_eas_new`、`zzu_ecard_new` 与 `zzu_mail_new` 直接沿用 `ZzuCasClient` 的运行时和 `timeoutMs` 外，其余构造函数及 Portal 探测函数均接收 UTF-8 JSON 配置对象（字段名后带 `?` 表示可选）：
 
 | 函数 | 配置 JSON 结构 | 字段要求与默认值 |
 | --- | --- | --- |
@@ -238,6 +242,7 @@ zzu_runtime_free(runtime);
 | `zzu_cas_new` | `{"account": "...", "password": "...", "deviceId": "...", "timeoutMs?": 15000}` | `account`、`password`、`deviceId` 为必填字符串。`deviceId` 必须含有非空白字符，缺失或无效时返回 `ZZU_INVALID_INPUT`。`timeoutMs` 为正整数毫秒，默认 `15000` |
 | `zzu_eas_new` | 无配置参数 | 沿用所传入 `ZzuCasClient` 的运行时、CAS 会话与 `timeoutMs` |
 | `zzu_ecard_new` | 无配置参数 | 沿用所传入 `ZzuCasClient` 的运行时、CAS 会话与 `timeoutMs` |
+| `zzu_mail_new` | 无配置参数 | 沿用所传入 `ZzuCasClient` 的运行时、CAS 会话与 `timeoutMs` |
 | `zzu_portal_discover` / `_blocking` | `{"timeoutMs?": 15000}` | 可传 `NULL` 与长度 `0`；`timeoutMs` 为正整数毫秒，默认 `15000` |
 | `zzu_portal_new` | `{"baseUrl": "...", "userIp": "...", "sourceAddress?": "user_ip", "timeoutMs?": 15000}` | `baseUrl` 为含主机名的 `http`/`https` URL（通常取探测结果的 `portalServerUrl`）；`userIp` 为门户识别的终端 IP（通常取探测结果的 `userIp`，登录时作为终端地址发送）；`sourceAddress` 为 `"user_ip"`（默认，把 `userIp` 绑定为本地源地址，适用于终端直接接入校园网）或 `"system"`（不绑定，由系统路由选择源地址，适用于终端位于 NAT 路由器后、`userIp` 为路由器 WAN 口地址）；`timeoutMs` 默认 `15000` |
 | `zzu_self_service_new` | `{"baseUrl": "...", "timeoutMs?": 15000}` | `baseUrl` 为校园网自助服务根地址（`http`/`https` URL）；`timeoutMs` 默认 `15000` |
@@ -257,7 +262,7 @@ zzu_runtime_free(runtime);
 | --- | --- | --- | --- |
 | `login` | 无 | `null` | 登录 CAS 会话；已缓存可复用令牌时直接激活，不发起网络请求。若需多因素认证，返回 `ZZU_AUTHENTICATION_ERROR`（`kind: "mfa_required"`）。可先调用 `prepare_sms` 预览脱敏手机号，再依次调用 `send_sms`、`verify_sms` 与 `login` |
 | `reauthenticate` | 无 | `null` | 清除本地缓存的令牌与 MFA 状态，强制重新执行完整密码认证 |
-| `logout` | 无 | `null` | 清空本地令牌、MFA 状态与登录标记；共享该会话的教务与校园卡客户端在下次读取 CAS 令牌时将收到 `not_authenticated` |
+| `logout` | 无 | `null` | 清空本地令牌、MFA 状态与登录标记；共享该会话的教务、校园卡与校园邮箱客户端在下次读取 CAS 令牌时将收到 `not_authenticated` |
 | `is_logged_in` | 无 | `boolean` | 返回当前 CAS 会话是否处于已登录状态 |
 | `set_tokens` | `userToken: string`（兼容别名 `idToken`）、`refreshToken: string` | `null` | 预置外部持久化的 JWT 令牌对并重置登录态，调用后**仍须调用 `login`** 激活会话。若令牌格式非法或已过期，返回 `ZZU_INVALID_INPUT` 而非 `token_expired` |
 | `tokens` | 无 | `{"userToken": string, "refreshToken": string} \| null` | 读取当前缓存的令牌对；未设置且未登录时返回 `null` |
@@ -361,6 +366,18 @@ zzu_runtime_free(runtime);
   - URL 跳转：`{"kind": "redirect", "url": "https://...", "referrer": "https://..." | null}`（如微信 H5 支付，发起跳转请求时若 `referrer` 非空须携带该 `Referer` 请求头）。
   - 表单提交：`{"kind": "submit_form", "url": "https://...", "fields": [{"name": "...", "value": "..."}]}`（如支付宝网关，须按 `POST` 提交表单；`fields` 中可能存在同名字段，封装层**必须保留重复项与原始顺序**，不得用字典/哈希表去重）。
 
+### `ZzuMailClient`（校园邮箱）
+
+除 `login`、`logout`、`is_logged_in` 外，其余方法均要求先完成本客户端的 `login`（未登录时返回 `ZZU_AUTHENTICATION_ERROR`，`kind: "not_authenticated"`）。
+
+| 方法名 | 参数 JSON 字段 | 结果 JSON 类型 | 行为说明 |
+| --- | --- | --- | --- |
+| `login` | 无 | `null` | 使用底层 `ZzuCasClient` 令牌换取邮箱会话（`sid`）与网页版入口地址（需先完成 CAS `login`） |
+| `logout` | 无 | `null` | 清除本地缓存的邮箱会话（不影响底层 `ZzuCasClient`） |
+| `is_logged_in` | 无 | `boolean` | 返回校园邮箱客户端是否已建立本地会话 |
+| `webmail_url` | 无 | `string` | 返回当前邮箱会话对应的网页版入口 URL（含 `sid` 会话凭据，**不得写入日志**）；会话超期或 CAS 令牌变更时自动换新 |
+| `unread_count` | 无 | `uint32` | 查询收件箱（文件夹 ID 为 `1`）中的未读邮件数（不计入虚拟视图、草稿箱、已发送、已删除、垃圾邮件与病毒文件夹） |
+
 ### `ZzuPortalClient`（校园网 Portal 认证）
 
 构建 `ZzuPortalClient` 前，通常先调用独立导出函数 `zzu_portal_discover`（或 `zzu_portal_discover_blocking`）探测当前强制门户参数：
@@ -431,7 +448,7 @@ zzu_runtime_free(runtime);
 1. **进程级静态回调加整数令牌表**：全进程只向原生层注册一个静态 C 回调函数，每次异步调用分配一个递增整数 token 作为 `user_data`（转为 `uintptr_t` / `void *`），在语言侧维护线程安全的 `token -> Promise/Future/Completer` 映射表。这样既避免闭包委托被垃圾回收器提前回收，也无需将托管对象引用固定（pin）在原生内存中。
 2. **极简回调体**：回调内部仅完成三件事——读取并复制 `ZzuBuffer` 字节（或转移指针）、调用 `zzu_buffer_free`、唤醒或投递结果到宿主语言自身的事件循环/调度器；JSON 反序列化与业务异常转换全部放在宿主线程中执行。
 3. **异常兜底与未知码容错**：在静态回调最外层捕获所有托管异常或运行时错误，严禁异常穿透 C 边界；状态码映射时将未识别的 `ZzuStatus` 统一归为 `ZZU_UNKNOWN_ERROR`。
-4. **生命周期映射**：将 `ZzuRuntime` 封装为进程级惰性单例；将五个客户端封装为各自独立的资源管理类型（如 Java/Kotlin `AutoCloseable`、C# `IDisposable`、Python 上下文管理器、Swift `deinit`），不要合并为大一统的“上帝客户端”。
+4. **生命周期映射**：将 `ZzuRuntime` 封装为进程级惰性单例；将六个客户端封装为各自独立的资源管理类型（如 Java/Kotlin `AutoCloseable`、C# `IDisposable`、Python 上下文管理器、Swift `deinit`），不要合并为大一统的“上帝客户端”。
 5. **RFC 9557 时间兼容**：Java `ZonedDateTime.parse` 可直接解析带 `[Asia/Shanghai]` 后缀的字符串；Python、C#、Go、Dart 等标准库仅识别 RFC 3339，解析前剥离末尾 `[...]` 方括号段即可。注意各语言时间精度与时区差异（Python 与 Dart 截断至微秒，C# 舍入至 100 纳秒，Java 与 Go 保留纳秒；Dart `DateTime.parse` 会转换为 UTC，需展示北京时间时应保留原始偏移）。
 
 ### Android 平台初始化

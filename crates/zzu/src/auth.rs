@@ -15,7 +15,7 @@ const CAS_URL: &str = "https://cas.s.zzu.edu.cn";
 const APP_AGENT: &str = "SWSuperApp/1.1.1()";
 const AUTHX_URL: &str = "https://authx-service.s.zzu.edu.cn";
 const INFO_URL: &str = "https://authx-service.s.zzu.edu.cn/personal/api/v1/personal/me/user";
-const EMAIL_URL: &str = "https://service.s.zzu.edu.cn/portalApi/api/open/email/login";
+pub(crate) const EMAIL_URL: &str = "https://service.s.zzu.edu.cn/portalApi/api/open/email/login";
 const PRESIDENT_MAILBOX_URL: &str = "https://mailbox.v.zzu.edu.cn/mobile/auth2/cas";
 const ECARD_URL: &str = "https://ecard.v.zzu.edu.cn/server/auth/host/open?host=11&org=2";
 const LIBRARY_URL: &str = "https://library.zzu.edu.cn/sso/login/3rd/22757";
@@ -708,13 +708,7 @@ impl CasClient {
     /// 校园邮箱经门户接口单点登录，不走通用 CAS `service` 票据签发。
     async fn email_login_url(&self) -> Result<String> {
         let token = self.user_token().await?;
-        let request = self
-            .inner
-            .http
-            .get(EMAIL_URL)
-            .header("Cookie", format!("X-Id-Token={token}"))
-            .header("X-Id-Token", token);
-        let response = http::send(request).await?.allow_redirect()?;
+        let response = fetch_email_login_redirect(&self.inner.http, &token).await?;
         extract_redirect_location(response, "邮箱")
     }
 
@@ -762,14 +756,27 @@ impl CasClient {
     /// 清除本地缓存的令牌、MFA 状态与登录标记。
     ///
     /// 所有共享同一会话的 [`CasClient`] 实例会立即变为未登录状态。
-    /// 派生的 [`crate::eas::UndergradEasClient`] 与 [`crate::ecard::EcardClient`] 仍保留各自的本地缓存
-    /// （如 `is_logged_in()`、`current_semester()`），但下次读取 [`Self::user_token`] 时会返回未认证错误。
+    /// 派生的 [`crate::eas::UndergradEasClient`]、[`crate::ecard::EcardClient`] 与
+    /// [`crate::mail::MailClient`] 仍保留各自的本地缓存（如 `is_logged_in()`、`current_semester()`），
+    /// 但下次读取 [`Self::user_token`] 时会返回未认证错误。
     pub async fn logout(&self) {
         let mut session = self.inner.session.lock().await;
         session.tokens = None;
         session.mfa = MfaState::default();
         session.is_logged_in = false;
     }
+}
+
+/// 携带 CAS `user_token` 请求校园邮箱单点登录入口，返回不自动跟随的重定向响应。
+pub(crate) async fn fetch_email_login_redirect(
+    http: &Client,
+    token: &str,
+) -> Result<http::Response> {
+    let request = http
+        .get(EMAIL_URL)
+        .header("Cookie", format!("X-Id-Token={token}"))
+        .header("X-Id-Token", token);
+    http::send(request).await?.allow_redirect()
 }
 
 fn extract_redirect_location(response: http::Response, system_name: &str) -> Result<String> {

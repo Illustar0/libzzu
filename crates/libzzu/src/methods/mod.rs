@@ -5,6 +5,7 @@
 mod cas;
 mod eas;
 mod ecard;
+mod mail;
 mod network;
 
 use std::{
@@ -20,6 +21,7 @@ use crate::error::{FfiError, FfiResult};
 pub use cas::*;
 pub use eas::*;
 pub use ecard::*;
+pub use mail::*;
 pub use network::*;
 
 /// 解析 JSON 参数；空输入等同于 `{}`，方便无参方法传 `NULL`。

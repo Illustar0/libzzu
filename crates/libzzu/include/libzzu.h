@@ -43,6 +43,11 @@ typedef struct ZzuEasClient ZzuEasClient;
 typedef struct ZzuEcardClient ZzuEcardClient;
 
 /**
+ * 校园邮箱客户端不透明句柄，线程安全，须通过 `zzu_mail_free` 释放。
+ */
+typedef struct ZzuMailClient ZzuMailClient;
+
+/**
  * 校园网 Portal 认证客户端不透明句柄，线程安全，须通过 `zzu_portal_free` 释放。
  */
 typedef struct ZzuPortalClient ZzuPortalClient;
@@ -237,7 +242,7 @@ ZzuStatus zzu_cas_new(const struct ZzuRuntime *runtime,
 /**
  * 释放 CAS 客户端句柄（传入 `NULL` 时无操作），不会阻塞，也可以在回调中调用。
  *
- * 已由它创建的 `ZzuEasClient` 与 `ZzuEcardClient` 不受影响，在途调用的回调仍会照常触发。
+ * 已由它创建的 `ZzuEasClient`、`ZzuEcardClient` 与 `ZzuMailClient` 不受影响，在途调用的回调仍会照常触发。
  *
  * # Safety
  *
@@ -440,6 +445,60 @@ ZzuStatus zzu_ecard_call_blocking(const struct ZzuEcardClient *ecard,
                                   const uint8_t *params,
                                   size_t params_len,
                                   struct ZzuBuffer **out_payload);
+
+/**
+ * 使用 `ZzuCasClient` 创建校园邮箱客户端（本地完成，不发起网络请求）。
+ *
+ * 新句柄与 `cas` 共享认证会话、运行时和时限；创建后释放 `cas` 不影响它。
+ *
+ * # Safety
+ *
+ * - `cas` 必须为 `NULL` 或指向尚未释放的有效句柄（`NULL` 时返回 `ZZU_INVALID_INPUT`）。
+ * - `out_mail` 必须非空、对齐且独占可写；成功时写入的句柄须通过 `zzu_mail_free` 释放。
+ * - `out_error` 可以为 `NULL`；若非空则必须对齐且独占可写，失败时写入的错误 JSON 须通过 `zzu_buffer_free` 释放。
+ */
+ZzuStatus zzu_mail_new(const struct ZzuCasClient *cas,
+                       struct ZzuMailClient **out_mail,
+                       struct ZzuBuffer **out_error);
+
+/**
+ * 释放校园邮箱客户端句柄（传入 `NULL` 时无操作），不会阻塞，也可以在回调中调用。
+ *
+ * 在途调用不受影响，其回调仍会照常触发。
+ *
+ * # Safety
+ *
+ * `mail` 必须为 `NULL`，或由 `zzu_mail_new` 返回且尚未释放的句柄；释放后不得再使用。
+ */
+void zzu_mail_free(struct ZzuMailClient *mail);
+
+/**
+ * 异步调用校园邮箱方法（如 `"unread_count"`），调用与回调规则同 `zzu_cas_call`。
+ *
+ * # Safety
+ *
+ * `mail` 必须为 `NULL` 或指向尚未释放的有效句柄，其余参数的要求同 `zzu_cas_call`。
+ */
+ZzuStatus zzu_mail_call(const struct ZzuMailClient *mail,
+                        const char *method,
+                        const uint8_t *params,
+                        size_t params_len,
+                        ZzuCallback callback,
+                        void *user_data,
+                        struct ZzuCall **out_call);
+
+/**
+ * 同步调用校园邮箱方法，规则同 `zzu_cas_call_blocking`。
+ *
+ * # Safety
+ *
+ * `mail` 必须为 `NULL` 或指向尚未释放的有效句柄，其余参数的要求同 `zzu_cas_call_blocking`。
+ */
+ZzuStatus zzu_mail_call_blocking(const struct ZzuMailClient *mail,
+                                 const char *method,
+                                 const uint8_t *params,
+                                 size_t params_len,
+                                 struct ZzuBuffer **out_payload);
 
 /**
  * 异步探测当前网络下的校园网 Portal 地址与本机内网 IP，结果可用于 `zzu_portal_new`。

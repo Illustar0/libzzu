@@ -141,7 +141,7 @@ pub unsafe extern "C" fn zzu_cas_new(
 
 /// 释放 CAS 客户端句柄（传入 `NULL` 时无操作），不会阻塞，也可以在回调中调用。
 ///
-/// 已由它创建的 `ZzuEasClient` 与 `ZzuEcardClient` 不受影响，在途调用的回调仍会照常触发。
+/// 已由它创建的 `ZzuEasClient`、`ZzuEcardClient` 与 `ZzuMailClient` 不受影响，在途调用的回调仍会照常触发。
 ///
 /// # Safety
 ///
