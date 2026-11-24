@@ -3,10 +3,10 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
 };
 use ecb::cipher::{BlockDecryptMut, KeyInit, block_padding::Pkcs7};
-use libsm::sm2::{encrypt::EncryptCtx, signature::SigCtx};
 use rand::Rng;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey};
 use serde::Deserialize;
+use sm2::{elliptic_curve::common::getrandom::SysRng, pke::EncryptingKey};
 
 use crate::{Error, Result};
 
@@ -72,16 +72,16 @@ pub(crate) fn sm2_encrypt(public_key: &str, plaintext: &[u8]) -> Result<String> 
     if key_bytes.len() == 64 {
         key_bytes.insert(0, 0x04);
     }
-    let key = SigCtx::new()
-        .load_pubkey(&key_bytes)
-        .map_err(|error| Error::crypto(error.to_string()))?;
-    let encrypted = EncryptCtx::new(plaintext.len(), key)
-        .encrypt(plaintext)
-        .map_err(|error| Error::crypto(error.to_string()))?;
-    // libsm 输出 C1C2C3，需改排为 C1C3C2 并去掉 C1 的 `0x04`。
-    let (point, remainder) = encrypted.split_at(65);
-    let (ciphertext, digest) = remainder.split_at(plaintext.len());
-    Ok(hex::encode([&point[1..], digest, ciphertext].concat()))
+    let key = EncryptingKey::from_sec1_bytes(&key_bytes)
+        .map_err(|_| Error::crypto("SM2 公钥无效".into()))?;
+    let encrypted = key
+        .encrypt(&mut SysRng, plaintext)
+        .map_err(|_| Error::crypto("SM2 加密失败".into()))?;
+    // sm2 默认按 C1C3C2 输出且 C1 带未压缩前缀 `0x04`，服务端按 sm-crypto 约定省略该前缀。
+    let wire = encrypted
+        .strip_prefix(&[0x04])
+        .ok_or_else(|| Error::crypto("SM2 密文缺少未压缩点前缀".into()))?;
+    Ok(hex::encode(wire))
 }
 
 pub(crate) fn random_sm4_key() -> String {
@@ -106,7 +106,11 @@ pub(crate) fn sm4_decrypt(data: &str, key: &str) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use ecb::cipher::BlockEncryptMut;
-    use libsm::sm2::encrypt::DecryptCtx;
+    use sm2::{
+        NonZeroScalar,
+        elliptic_curve::Generate,
+        pke::{DecryptingKey, Mode},
+    };
 
     #[test]
     fn rsa_key_accepts_cas_unwrapped_pem() {
@@ -136,23 +140,18 @@ mod tests {
 
     #[test]
     fn sm2_ciphertext_matches_sm_crypto_c1c3c2_layout() {
-        let context = SigCtx::new();
-        let (public, secret) = context.new_keypair().unwrap();
-        let key_hex = hex::encode(context.serialize_pubkey(&public, false).unwrap());
+        let secret = NonZeroScalar::try_generate_from_rng(&mut SysRng).unwrap();
+        let decrypting = DecryptingKey::new_with_mode(secret, Mode::C1C3C2);
+        let key_hex = hex::encode(decrypting.encrypting_key().to_sec1_bytes());
         let plaintext = br#"{"amt":"1"}"#;
         for key in [key_hex.as_str(), &key_hex[2..]] {
             let wire = hex::decode(sm2_encrypt(key, plaintext).unwrap()).unwrap();
-            let (point, rest) = wire.split_at(64);
-            let (digest, ciphertext) = rest.split_at(32);
-            let native = [&[4][..], point, ciphertext, digest].concat();
-            assert_eq!(
-                DecryptCtx::new(plaintext.len(), secret.clone())
-                    .decrypt(&native)
-                    .unwrap(),
-                plaintext
-            );
+            assert_eq!(wire.len(), 64 + 32 + plaintext.len());
+            let sec1_cipher = [&[0x04][..], &wire].concat();
+            assert_eq!(decrypting.decrypt(&sec1_cipher).unwrap(), plaintext);
         }
         assert!(sm2_encrypt("not hex", plaintext).is_err());
+        assert!(sm2_encrypt(&key_hex, b"").is_err());
     }
 
     #[test]

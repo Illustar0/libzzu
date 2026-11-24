@@ -17,7 +17,6 @@ encoding_rs.workspace = true
 futures-util.workspace = true
 hex.workspace = true
 icalendar.workspace = true
-libsm.workspace = true
 pem.workspace = true
 rand.workspace = true
 regex.workspace = true
@@ -27,6 +26,7 @@ rust_decimal.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sm2.workspace = true
 sm4.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net"] }

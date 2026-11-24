@@ -18,7 +18,6 @@ encoding_rs = "0.8"
 hex = "0.4"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 icalendar = { version = "0.17", default-features = false }
-libsm = "0.6"
 pem = "4"
 rand = "0.8"
 regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
@@ -28,6 +27,7 @@ rust_decimal = { version = "1.43", default-features = false, features = ["std", 
 scraper = "0.24"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
+sm2 = { version = "0.14", default-features = false, features = ["pke", "alloc", "getrandom"] }
 sm4 = "0.5"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
@@ -45,9 +45,3 @@ undocumented_unsafe_blocks = "deny"
 [profile.release]
 lto = true
 codegen-units = 1
-
-[profile.test.package.libsm]
-opt-level = 2
-
-[profile.test.package.num-bigint]
-opt-level = 2
