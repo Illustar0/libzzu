@@ -209,7 +209,7 @@ impl CasClient {
     /// 使用自定义 [`reqwest::Client`] 创建统一身份认证客户端。
     ///
     /// `client` 必须禁用自动重定向（如通过 [`crate::http_client_builder`] 构建），以便 [`Self::service_login_url`] 直接读取单点登录响应的 `Location` 头。
-    /// `device_id` 可以是任意包含非空白字符的字符串，请为每台设备使用唯一的 ID。
+    /// `device_id` 可以是任意包含非空白字符的字符串，但它本质上是凭证，请确保它唯一且难以预测。
     ///
     /// # Errors
     ///
