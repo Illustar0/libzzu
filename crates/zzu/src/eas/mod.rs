@@ -20,6 +20,7 @@ pub use timetable::{
     TeachingClass, Timetable, TimetableOptions, WeekView,
 };
 
+use futures_util::future::try_join4;
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
@@ -196,10 +197,10 @@ impl UndergradEasClient {
     pub async fn classroom_catalog(&self) -> Result<ClassroomCatalog> {
         self.current_semester()?;
         let token = self.cas.user_token().await?;
-        let (campuses, buildings, room_types, floors) = tokio::try_join!(
+        let (campuses, buildings, room_types, floors) = try_join4(
             self.fetch_with_token::<Vec<Campus>>(
                 &token,
-                "/eams-micro-server/api/v1/room/place/campus"
+                "/eams-micro-server/api/v1/room/place/campus",
             ),
             self.fetch_with_token::<Vec<Building>>(
                 &token,
@@ -211,9 +212,10 @@ impl UndergradEasClient {
             ),
             self.fetch_with_token::<Vec<i32>>(
                 &token,
-                "/eams-micro-server/api/v1/room/place/floors"
+                "/eams-micro-server/api/v1/room/place/floors",
             ),
-        )?;
+        )
+        .await?;
         Ok(ClassroomCatalog {
             campuses,
             buildings,
