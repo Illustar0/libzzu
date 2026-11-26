@@ -493,6 +493,9 @@ mod tests {
         let (status, error) = call_async(zzu_eas_call, eas, c"login", b"");
         assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
         assert_eq!(error["kind"], "not_authenticated");
+        let (status, error) = call_async(zzu_eas_call, eas, c"transcript", b"");
+        assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
+        assert_eq!(error["kind"], "not_authenticated");
         let (status, error) = call_async(zzu_ecard_call, ecard, c"balance", b"");
         assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
         assert_eq!(error["kind"], "not_authenticated");

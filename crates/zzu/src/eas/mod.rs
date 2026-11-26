@@ -1,10 +1,11 @@
-//! 本科教务系统（EAMS）客户端与学期校历、课表、教室占用数据结构。
+//! 本科教务系统（EAMS）客户端与学期校历、课表、成绩单、教室占用数据结构。
 
 mod calendar;
 mod classroom;
 mod common;
 mod semester;
 mod timetable;
+mod transcript;
 
 pub use calendar::CalendarExportOptions;
 pub use classroom::{
@@ -19,6 +20,9 @@ pub use timetable::{
     SessionConflict, SessionKind, SessionState, SessionTeacher, SessionView, TeacherName,
     TeachingClass, Timetable, TimetableOptions, WeekView,
 };
+pub use transcript::{
+    CourseGrade, GpaRank, GradeSemester, GradeState, ProcessGrade, StudyType, SubGrade, Transcript,
+};
 
 use std::collections::BTreeMap;
 
@@ -30,6 +34,7 @@ use serde::de::DeserializeOwned;
 use crate::{Error, Result, auth::CasClient, http};
 use classroom::{RawClassroomPage, RoomsRequest, merge_pages, validate_page, validate_page_size};
 use timetable::{RawCourseTableEntry, build_timetable};
+use transcript::{RawCourseGrade, RawGpaRank, build_transcript};
 
 const EAS_URL: &str = "https://jwxt.zzu.edu.cn";
 
@@ -195,6 +200,32 @@ impl UndergradEasClient {
         build_timetable(semester, entries, unit_layouts)
     }
 
+    /// 并发查询当前学生的完整成绩单与累计专业绩点排名。
+    ///
+    /// 内部并发请求全部学期课程成绩与累计绩点排名接口，剥离重复的学生与教学班冗余字段，
+    /// 按最新学期在前排序，并对尚未完成网上评教的课程自动隐藏占位零分。
+    ///
+    /// # Errors
+    ///
+    /// - 教务客户端尚未登录或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
+    /// - 成绩或绩点排名接口请求失败、业务状态非零或响应解码校验失败时返回错误。
+    pub async fn transcript(&self) -> Result<Transcript> {
+        self.current_semester()?;
+        let token = self.cas.user_token().await?;
+        let (grades, gpa_rank) = try_join(
+            self.fetch_with_token::<Vec<RawCourseGrade>>(
+                &token,
+                "/eams-micro-server/api/v1/grade/student/grades",
+            ),
+            self.fetch_with_token::<Option<RawGpaRank>>(
+                &token,
+                "/eams-micro-server/api/v1/grade/student/gpa-rank",
+            ),
+        )
+        .await?;
+        Ok(build_transcript(grades, gpa_rank))
+    }
+
     /// 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型、楼层与标准节次作息）。
     ///
     /// 内部并发请求 5 个目录接口，返回扁平列表供前端渲染筛选项、绘制节次概览及按
@@ -341,6 +372,7 @@ mod tests {
         let date: Date = "2026-11-23".parse().unwrap();
         let query = ClassroomQuery::new(date);
 
+        assert!(eas.transcript().await.unwrap_err().is_not_authenticated());
         assert!(
             eas.classroom_catalog()
                 .await
