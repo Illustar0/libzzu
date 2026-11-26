@@ -247,6 +247,10 @@ pub enum RoomActivityType {
     Experiment,
     /// 教室借用（上游 `"RoomBorrow"`，序列化为 `"room_borrow"`）。
     RoomBorrow,
+    /// 考试安排（上游 `"Exam"`，序列化为 `"exam"`）。
+    Exam,
+    /// 调课占用（上游 `"ScheduleChange"`，序列化为 `"schedule_change"`）。
+    ScheduleChange,
     /// 上游返回的其他未知活动类型，原样保留字符串。
     Other(String),
 }
@@ -259,6 +263,8 @@ impl RoomActivityType {
             Self::Lesson => "lesson",
             Self::Experiment => "experiment",
             Self::RoomBorrow => "room_borrow",
+            Self::Exam => "exam",
+            Self::ScheduleChange => "schedule_change",
             Self::Other(other) => other.as_str(),
         }
     }
@@ -276,6 +282,8 @@ impl From<String> for RoomActivityType {
             "Lesson" | "lesson" => Self::Lesson,
             "ExpProjectScheduleGroup" | "experiment" => Self::Experiment,
             "RoomBorrow" | "room_borrow" => Self::RoomBorrow,
+            "Exam" | "exam" => Self::Exam,
+            "ScheduleChange" | "schedule_change" => Self::ScheduleChange,
             _ => Self::Other(value),
         }
     }
@@ -681,6 +689,26 @@ mod tests {
                     "activityType": "Exam",
                     "activityName": "期末考试",
                     "teacherName": ""
+                },
+                {
+                    "id": 581,
+                    "activityId": 1000,
+                    "date": "2026-11-23",
+                    "startTime": 1600,
+                    "endTime": 1740,
+                    "activityType": "ScheduleChange",
+                    "activityName": "调课占用",
+                    "teacherName": "李四"
+                },
+                {
+                    "id": 581,
+                    "activityId": 1001,
+                    "date": "2026-11-23",
+                    "startTime": 2100,
+                    "endTime": 2130,
+                    "activityType": "CustomActivity",
+                    "activityName": "其他活动",
+                    "teacherName": ""
                 }
             ]
         });
@@ -690,7 +718,7 @@ mod tests {
     #[test]
     fn room_occupation_parses_types_times_and_roundtrips_json() {
         let room = sample_room_with_occupations();
-        assert_eq!(room.occupations.len(), 4);
+        assert_eq!(room.occupations.len(), 6);
         assert_eq!(
             room.occupations[0].activity_type,
             RoomActivityType::Experiment
@@ -700,9 +728,14 @@ mod tests {
             room.occupations[2].activity_type,
             RoomActivityType::RoomBorrow
         );
+        assert_eq!(room.occupations[3].activity_type, RoomActivityType::Exam);
         assert_eq!(
-            room.occupations[3].activity_type,
-            RoomActivityType::Other("Exam".into())
+            room.occupations[4].activity_type,
+            RoomActivityType::ScheduleChange
+        );
+        assert_eq!(
+            room.occupations[5].activity_type,
+            RoomActivityType::Other("CustomActivity".into())
         );
         assert_eq!(
             room.occupations[0].start_time.to_string(),
@@ -713,13 +746,11 @@ mod tests {
         assert_eq!(json["occupations"][0]["activityType"], "experiment");
         assert_eq!(json["occupations"][1]["activityType"], "lesson");
         assert_eq!(json["occupations"][2]["activityType"], "room_borrow");
-        assert_eq!(json["occupations"][3]["activityType"], "Exam");
+        assert_eq!(json["occupations"][3]["activityType"], "exam");
+        assert_eq!(json["occupations"][4]["activityType"], "schedule_change");
+        assert_eq!(json["occupations"][5]["activityType"], "CustomActivity");
         let restored: ClassroomOccupancy = serde_json::from_value(json).unwrap();
-        assert_eq!(restored.occupations.len(), 4);
-        assert_eq!(
-            restored.occupations[0].activity_type,
-            RoomActivityType::Experiment
-        );
+        assert_eq!(restored, room);
     }
 
     #[test]

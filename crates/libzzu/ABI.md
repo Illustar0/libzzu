@@ -339,7 +339,7 @@ zzu_runtime_free(runtime);
 | `RoomType` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`enabled: boolean` | 教室类型元数据 |
 | `ClassroomPage` | `items: ClassroomOccupancy[]`、`page: uint32`、`pageSize: uint32`、`totalItems: uint32`、`totalPages: uint32` | 单页教室占用查询结果；`pageSize` 为本次实际使用的页大小，SDK 不应假定其恒为 `44` |
 | `ClassroomOccupancy` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`buildingId: int64`、`campusNameZh: string`、`occupations: RoomOccupation[]` | 教室信息与当日占用列表（无占用时为空数组） |
-| `RoomOccupation` | `activityId: int64 \| null`、`activityType: string`、`activityName: string`、`activityNameEn: string \| null`、`date: "YYYY-MM-DD"`、`startTime: string`、`endTime: string`、`teacherName: string`、`teacherNameEn: string \| null` | 单条教室占用记录；`startTime`、`endTime` 为 `Asia/Shanghai` 时区的 RFC 9557 字符串（左闭右开区间 `[startTime, endTime)`）；`activityType` 已知取值为 `"lesson"`、`"experiment"`、`"room_borrow"`，封装层须容忍上游新增的其他字符串取值 |
+| `RoomOccupation` | `activityId: int64 \| null`、`activityType: string`、`activityName: string`、`activityNameEn: string \| null`、`date: "YYYY-MM-DD"`、`startTime: string`、`endTime: string`、`teacherName: string`、`teacherNameEn: string \| null` | 单条教室占用记录；`startTime`、`endTime` 为 `Asia/Shanghai` 时区的 RFC 9557 字符串（左闭右开区间 `[startTime, endTime)`）；`activityType` 已知取值为 `"lesson"`、`"experiment"`、`"room_borrow"`、`"exam"`、`"schedule_change"`，封装层须容忍上游新增的其他字符串取值 |
 
 ### `ZzuEcardClient`（校园卡与电控）
 
