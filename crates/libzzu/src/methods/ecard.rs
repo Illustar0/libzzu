@@ -39,6 +39,11 @@ struct OptionalRoom {
     room: Option<String>,
 }
 
+fn parse_optional_room(params: &[u8]) -> FfiResult<Option<RoomId>> {
+    let OptionalRoom { room } = parse(params)?;
+    Ok(room.as_deref().map(str::parse::<RoomId>).transpose()?)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Transactions {
@@ -50,6 +55,17 @@ struct Transactions {
     page: Option<u32>,
     #[serde(default)]
     page_size: Option<u32>,
+}
+
+impl Transactions {
+    fn into_request(self) -> (TransactionQuery, u32, Option<u32>) {
+        let query = TransactionQuery {
+            start_date: self.start_date,
+            end_date: self.end_date,
+            kind: self.kind,
+        };
+        (query, self.page.unwrap_or(1), self.page_size)
+    }
 }
 
 #[derive(Deserialize)]
@@ -228,25 +244,13 @@ impl Service for Guarded<EcardClient> {
             "balance" => reply(&self.read().await?.balance().await?),
             "payment_code" => reply(&self.read().await?.payment_code().await?),
             "transactions" => {
-                let Transactions {
-                    start_date,
-                    end_date,
-                    kind,
-                    page,
-                    page_size,
-                } = parse(params)?;
-                let query = TransactionQuery {
-                    start_date,
-                    end_date,
-                    kind,
-                };
-                reply(
-                    &self
-                        .read()
-                        .await?
-                        .transactions(&query, page.unwrap_or(1), page_size)
-                        .await?,
-                )
+                let (query, page, page_size) = parse::<Transactions>(params)?.into_request();
+                let items = self
+                    .read()
+                    .await?
+                    .transactions(&query, page, page_size)
+                    .await?;
+                reply(&items)
             }
             "locations" => {
                 let Locations { parent } = parse(params)?;
@@ -257,9 +261,12 @@ impl Service for Guarded<EcardClient> {
                     .collect();
                 reply(&locations)
             }
+            "energy_account" => {
+                let room = parse_optional_room(params)?;
+                reply(&self.read().await?.energy_account(room.as_ref()).await?)
+            }
             "remaining_energy" => {
-                let OptionalRoom { room } = parse(params)?;
-                let room = room.as_deref().map(str::parse::<RoomId>).transpose()?;
+                let room = parse_optional_room(params)?;
                 reply(&self.read().await?.remaining_energy(room.as_ref()).await?)
             }
             "recharge_energy" => {

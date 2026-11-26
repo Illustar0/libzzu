@@ -600,6 +600,20 @@ mod tests {
         );
         assert_eq!(
             call_async(
+                zzu_ecard_call,
+                ecard,
+                c"energy_account",
+                br#"{"room":"bad"}"#
+            )
+            .0,
+            ZZU_INVALID_INPUT
+        );
+        assert_eq!(
+            call_async(zzu_ecard_call, ecard, c"energy_account", b"").0,
+            ZZU_AUTHENTICATION_ERROR
+        );
+        assert_eq!(
+            call_async(
                 zzu_portal_call,
                 portal,
                 c"logout",

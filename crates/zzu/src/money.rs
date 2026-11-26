@@ -2,13 +2,11 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, de};
 use serde_json::Value;
 
-pub(crate) fn deserialize_decimal<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Decimal, D::Error> {
-    let text = match Value::deserialize(deserializer)? {
+fn parse_decimal_value<E: de::Error>(value: Value) -> Result<Decimal, E> {
+    let text = match value {
         Value::String(text) => text,
         Value::Number(number) => number.to_string(),
-        _ => return Err(de::Error::custom("金额必须为十进制数字或字符串")),
+        _ => return Err(E::custom("金额必须为十进制数字或字符串")),
     };
     let text = text.trim();
     match text.split_once(['e', 'E']) {
@@ -17,7 +15,22 @@ pub(crate) fn deserialize_decimal<'de, D: Deserializer<'de>>(
         }
         None => Decimal::from_str_exact(text),
     }
-    .map_err(de::Error::custom)
+    .map_err(E::custom)
+}
+
+pub(crate) fn deserialize_decimal<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Decimal, D::Error> {
+    parse_decimal_value(Value::deserialize(deserializer)?)
+}
+
+pub(crate) fn deserialize_optional_decimal<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Decimal>, D::Error> {
+    match Value::deserialize(deserializer)? {
+        Value::Null => Ok(None),
+        value => parse_decimal_value(value).map(Some),
+    }
 }
 
 #[cfg(test)]
@@ -26,6 +39,16 @@ mod tests {
 
     #[test]
     fn json_amounts_preserve_decimal_precision_and_scale() {
+        assert_eq!(deserialize_optional_decimal(&Value::Null).unwrap(), None);
+        assert_eq!(
+            deserialize_optional_decimal(&Value::String("0.57".into()))
+                .unwrap()
+                .unwrap()
+                .to_string(),
+            "0.57"
+        );
+        assert!(deserialize_optional_decimal(&Value::String(String::new())).is_err());
+
         for (json, expected) in [
             ("90071992547409.93", "90071992547409.93"),
             ("\"90071992547409.93\"", "90071992547409.93"),

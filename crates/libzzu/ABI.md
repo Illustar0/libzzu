@@ -137,7 +137,7 @@ zzu_runtime_free(runtime);
 - **线程安全与读写并发**：所有导出函数均支持多线程并发调用。各客户端按状态可变性采用不同的内部同步策略：
   - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuMailClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
     - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`timetable`、`transcript`、`exams`、`program_completion`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
-    - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`payment_code`、`transactions`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话、默认房间与校园码刷新配置缓存时短暂持状态锁，释放锁后再发网络请求）。
+    - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`payment_code`、`transactions`、`locations`、`energy_account`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话、默认房间与校园码刷新配置缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count`、`messages` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
   - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`devices`、`set_device_trust`、`user_info`、`portrait` 与 `service_sso_url` 在读取令牌并释放会话锁后并发执行网络请求。
@@ -376,17 +376,19 @@ zzu_runtime_free(runtime);
 | `payment_code` | 无 | `PaymentCode` | 获取在线校园码（动态付款码与通行码）及服务端建议刷新秒数；在线码未开放时返回 `ZZU_REMOTE_ERROR` |
 | `transactions` | `startDate: "YYYY-MM-DD"`、`endDate: "YYYY-MM-DD"`、`kind?: "consumption" \| "recharge" \| "subsidy"`、`page?: uint32`、`pageSize?: uint32` | `Transaction[]` | 分页查询指定日期闭区间内的校园卡账单流水。`kind` 省略时查询全部类别；`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `30`；`page == 0`、`pageSize == 0` 或 `startDate > endDate` 返回 `ZZU_INVALID_INPUT`。远端不返回总条数，翻页至返回数组长度小于 `pageSize`（或为空数组）即到达末页。`recharge_energy` 超时或取消后可通过本方法核对最新扣款记录 |
 | `locations` | `parent: string` | `{"id": string, "name": string}[]` | 按层级检索电控位置目录（按 `id` 字典序升序排列，`area`、`building`、`level` 各段均非空且不含 `-`）：`parent` 依次传 `""`（区域）、`"area"`（如 `"1"`，楼栋）、`"area-building"`（如 `"1-2"`，单元/楼层）、`"area-building--level"`（如 `"1-2--3"`，房间，返回的 `id` 为合法房间号）；格式不符返回 `ZZU_INVALID_INPUT` |
-| `remaining_energy` | `room?: string` | `number` | 查询指定房间（省略时取 `default_room`）的剩余电量（`float64`，单位：度） |
+| `energy_account` | `room?: string` | `EnergyAccount` | 查询指定房间（省略时取 `default_room`）的电控账户详情（剩余电量、电价单价、电费余额、校园卡余额快照与表计状态）；`room` 格式非法时返回 `ZZU_INVALID_INPUT` |
+| `remaining_energy` | `room?: string` | `number` | 查询指定房间（省略时取 `default_room`）的剩余电量（`float64`，单位：度）；需电价、房间名称或表计状态时请改用 `energy_account` |
 | `recharge_energy` | `paymentPassword: string`、`amount: integer`、`room: string` | `null` | 使用校园卡支付密码从卡余额扣款充入电费；`amount` 为正整数元（`uint32`），`room` 为合法房间号。若响应缺失确认字段将返回 `ZZU_DECODE_ERROR`，加密响应解密失败将返回 `ZZU_CRYPTO_ERROR`，两者扣款结果均未知，重试前须先查余额或核对账单流水 |
 | `recharge_config` | 无 | `{"amounts": uint32[], "isBrowserPaymentEnabled": boolean}` | 查询校园卡充值可选面额列表（元）及网页收银台充值开关状态 |
 | `create_recharge_order` | `amount: integer` | `Order` | 创建指定正整数元（`uint32`）的校园卡充值订单；网页充值未开放时返回 `ZZU_REMOTE_ERROR` |
 | `payment_channels` | `order: Order` | `Channel[]` | 查询该订单在学校收银台可用的支付渠道列表 |
 | `prepare_payment` | `order: Order`、`channel: Channel`、`context?: PaymentContext` | `PaymentAction` | 向收银台预下单并提取最终拉起第三方支付的跳转或表单动作 |
 
-校园码、账单流水、充值与支付数据结构：
+校园码、账单流水、电控账户、充值与支付数据结构：
 
 - **`PaymentCode`**：`{"code": string, "balance": string, "refreshSeconds": uint32}`。其中 `code` 为用于渲染二维码图像的原始动态码字符串（含实时支付凭据，**严禁写入日志**），`balance` 为当前校园卡余额（十进制元字符串），`refreshSeconds` 为建议自动刷新周期（秒，如 `60`）。
 - **`Transaction`**：`{"id": string, "time": string, "amount": string, "merchantName": string, "summary": string, "isRefund": boolean}`。其中 `id` 为交易流水号，`time` 为 `Asia/Shanghai` 时区的 RFC 9557 时间字符串，`amount` 为带符号精确十进制元字符串（消费通常为负数如 `"-12.50"`，充值与补助通常为正数如 `"50.00"`），`isRefund` 表示是否为退款记录。
+- **`EnergyAccount`**：`{"room": string, "roomName": string | null, "remainingEnergy": float64, "unitPrice": string | null, "electricityBalance": string | null, "cardBalance": string | null, "status": string | null}`。其中 `room` 为实际查询的规范房间号（格式为 `area-building--level-room`），`roomName` 为完整位置名称（省略 `room` 查询默认房间或传入的 `room` 命中已缓存默认房间时返回，直接查询未缓存的其他房间时为 `null`），`remainingEnergy` 为剩余电量（度 / kWh），`unitPrice`（电价单价，元/度）、`electricityBalance`（按金额计费房间的电费余额，元）与 `cardBalance`（查询时刻的校园卡余额快照，元）在服务端提供时均为精确十进制字符串，`status` 为电控表计运行状态描述（如 `"正常"`）。
 
 - **`Order`**：包含公开字段 `id`（`string`，订单号）、`amount`（`uint32`，充值金额，单位元）、`checkoutUrl`（`string`，默认收银台 HTTPS 地址）以及内部不透明字段 `payment`。调用 `payment_channels`、`prepare_payment` 或 `zzu_recharge_order_checkout_url_for` 时将整个 `Order` JSON 对象原样传回即可；该对象可序列化保存并在新进程中恢复以继续支付，但内部含支付凭据，**严禁写入日志**。
 - **`Channel`**：`{"id": string, "name": string, "accountId": string | null}`。作为入参传回时 `id`（非空）与 `name` 必填，`accountId` 可省略或传 `null`。

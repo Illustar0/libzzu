@@ -16,10 +16,12 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::{Error, Result, auth::CasClient, crypto, http};
 
 mod code;
+mod energy;
 mod recharge;
 mod transaction;
 
 pub use code::PaymentCode;
+pub use energy::EnergyAccount;
 pub use recharge::{
     PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeConfig, RechargeOrder,
 };
@@ -127,7 +129,7 @@ impl Session {
 #[derive(Default)]
 struct EcardState {
     session: Option<Session>,
-    default_room: Option<RoomId>,
+    default_room: Option<energy::DefaultRoom>,
     qr_refresh_seconds: Option<u32>,
 }
 
@@ -220,38 +222,6 @@ impl EcardClient {
         Ok(token)
     }
 
-    /// 查询并缓存当前账号在电控系统中绑定的默认宿舍房间 ID。
-    ///
-    /// # Errors
-    ///
-    /// - 客户端尚未调用 [`Self::login`] 时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 会话刷新、网络请求、远端业务校验或房间号解析失败时返回错误。
-    pub async fn default_room(&self) -> Result<RoomId> {
-        #[derive(Deserialize)]
-        struct Config {
-            location: Location,
-        }
-        #[derive(Deserialize)]
-        struct Location {
-            room: RoomId,
-        }
-        let token = self.access_token().await?;
-        let room = self.lock_state().default_room.clone();
-        if let Some(room) = room {
-            return Ok(room);
-        }
-        let response = http::json(
-            self.http
-                .post(format!("{ECARD_URL}/utilities/config"))
-                .header("Authorization", token)
-                .json(&json!({"utilityType":"electric","appId":ELECTRIC_APP_ID})),
-        )
-        .await?;
-        let config: Config = http::ecard_data(response)?;
-        self.lock_state().default_room = Some(config.location.room.clone());
-        Ok(config.location.room)
-    }
-
     /// 查询当前账号的校园卡余额（单位：元）。
     ///
     /// # Errors
@@ -314,44 +284,6 @@ impl EcardClient {
             .into_iter()
             .map(|location| (location.id, location.name))
             .collect())
-    }
-
-    /// 查询指定宿舍房间的剩余电量（单位：度；`room` 为 `None` 时取 [`Self::default_room`]）。
-    ///
-    /// # Errors
-    ///
-    /// - 客户端尚未登录时返回 [`crate::AuthenticationErrorKind::NotAuthenticated`]。
-    /// - 获取默认房间、请求电费账户或解析 `quantity` 电量字段失败时返回错误。
-    pub async fn remaining_energy(&self, room: Option<&RoomId>) -> Result<f64> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Account {
-            template_list: Vec<Template>,
-        }
-        #[derive(Deserialize)]
-        struct Template {
-            code: String,
-            value: Value,
-        }
-        let room = match room {
-            Some(room) => room.clone(),
-            None => self.default_room().await?,
-        };
-        let token = self.access_token().await?;
-        let response = http::json(
-            self.http
-                .post(format!("{ECARD_URL}/utilities/account"))
-                .header("Authorization", token)
-                .json(&room.location()),
-        )
-        .await?;
-        let account: Account = http::ecard_data(response)?;
-        let quantity = account
-            .template_list
-            .iter()
-            .find(|template| template.code == "quantity")
-            .ok_or_else(|| Error::decode_message("电费账户缺少 quantity".into()))?;
-        http::parse_number(&quantity.value, "quantity")
     }
 
     /// 使用校园卡支付密码从卡余额扣款，为指定宿舍房间充值电费。
