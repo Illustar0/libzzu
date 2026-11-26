@@ -78,8 +78,66 @@ pub(crate) struct Response {
     pub context: Arc<RequestContext>,
 }
 
+pub(crate) struct BytesResponse {
+    pub status: StatusCode,
+    pub headers: HeaderMap,
+    pub bytes: Vec<u8>,
+    pub context: Arc<RequestContext>,
+}
+
+fn sanitized_request_url(url: &Url) -> String {
+    let mut sanitized = url.clone();
+    sanitized.set_query(None);
+    sanitized.set_fragment(None);
+    let _ = sanitized.set_username("");
+    let _ = sanitized.set_password(None);
+    sanitized.to_string()
+}
+
 pub(crate) async fn send(builder: RequestBuilder) -> Result<Response> {
     send_with_text_decoder(builder, reqwest::Response::text).await
+}
+
+pub(crate) async fn bytes(builder: RequestBuilder) -> Result<BytesResponse> {
+    let (client, request) = builder.build_split();
+    let request = request?;
+    let mut context = RequestContext {
+        method: request.method().to_string(),
+        url: sanitized_request_url(request.url()),
+        status_code: None,
+        error_code: None,
+        response_body: None,
+    };
+    let response = client
+        .execute(request)
+        .await
+        .map_err(|error| Error::from(error).with_request(Arc::new(context.clone())))?;
+    let status = response.status();
+    context.status_code = Some(status.as_u16());
+    let headers = response.headers().clone();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| Error::from(error).with_request(Arc::new(context.clone())))?
+        .to_vec();
+    let is_image = headers
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|ct| ct.trim_start().to_ascii_lowercase().starts_with("image/"));
+    if (!status.is_success() || !is_image)
+        && let Ok(text) = std::str::from_utf8(&body)
+    {
+        context.error_code = serde_json::from_str::<Value>(text)
+            .ok()
+            .and_then(|value| value.get("code").map(value_code));
+        context.response_body = Some(text.to_owned());
+    }
+    Ok(BytesResponse {
+        status,
+        headers,
+        bytes: body,
+        context: Arc::new(context),
+    })
 }
 
 pub(crate) async fn send_with_text_decoder<DecodeFuture>(
@@ -91,14 +149,9 @@ where
 {
     let (client, request) = builder.build_split();
     let request = request?;
-    let mut url = request.url().clone();
-    url.set_query(None);
-    url.set_fragment(None);
-    let _ = url.set_username("");
-    let _ = url.set_password(None);
     let mut context = RequestContext {
         method: request.method().to_string(),
-        url: url.to_string(),
+        url: sanitized_request_url(request.url()),
         status_code: None,
         error_code: None,
         response_body: None,
@@ -161,6 +214,27 @@ impl Response {
     pub fn decode<T: DeserializeOwned>(self) -> Result<T> {
         serde_json::from_str(self.body())
             .map_err(|error| Error::from(error).with_request(self.context))
+    }
+}
+
+impl BytesResponse {
+    pub fn require_success(self) -> Result<Self> {
+        if self.status.is_success() {
+            return Ok(self);
+        }
+        let detail = self
+            .context
+            .response_body
+            .as_deref()
+            .and_then(|body| serde_json::from_str::<Value>(body).ok())
+            .and_then(|value| response_message(&value))
+            .unwrap_or_else(|| {
+                self.status
+                    .canonical_reason()
+                    .unwrap_or("服务器返回错误状态")
+                    .to_owned()
+            });
+        Err(Error::http(detail).with_request(self.context))
     }
 }
 

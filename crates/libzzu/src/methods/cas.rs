@@ -100,6 +100,7 @@ impl ClientService for CasClient {
                 reply(&self.devices(page.unwrap_or(1), page_size).await?)
             }
             "user_info" => reply(&self.user_info().await?),
+            "portrait" => reply(&self.portrait().await?),
             "service_sso_url" => {
                 let ServiceSso { service } = parse(params)?;
                 reply(&self.service_sso_url(service).await?)

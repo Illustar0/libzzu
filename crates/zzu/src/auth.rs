@@ -1,4 +1,4 @@
-//! 统一身份认证（CAS）会话管理、短信多因素认证、设备信任管理、个人信息查询与业务系统单点登录。
+//! 统一身份认证（CAS）会话管理、短信多因素认证、设备信任管理、个人信息与头像查询以及业务系统单点登录。
 
 use std::sync::Arc;
 
@@ -12,8 +12,10 @@ use tokio::sync::Mutex;
 use crate::{AuthenticationErrorKind, Error, Result, crypto, http};
 
 mod device;
+mod portrait;
 
 pub use device::{DEFAULT_DEVICE_PAGE_SIZE, DevicePage, LoginDevice};
+pub use portrait::Portrait;
 
 const CAS_URL: &str = "https://cas.s.zzu.edu.cn";
 const APP_AGENT: &str = "SWSuperApp/1.1.1()";
