@@ -477,6 +477,9 @@ mod tests {
         let (status, error) = call_async(zzu_ecard_call, ecard, c"balance", b"");
         assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
         assert_eq!(error["kind"], "not_authenticated");
+        let (status, error) = call_async(zzu_ecard_call, ecard, c"payment_code", b"");
+        assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
+        assert_eq!(error["kind"], "not_authenticated");
 
         assert_eq!(
             call_async(zzu_mail_call, mail, c"is_logged_in", b""),

@@ -226,6 +226,7 @@ impl Service for Guarded<EcardClient> {
             "is_logged_in" => reply(&self.read().await?.is_logged_in()),
             "default_room" => reply(&self.read().await?.default_room().await?),
             "balance" => reply(&self.read().await?.balance().await?),
+            "payment_code" => reply(&self.read().await?.payment_code().await?),
             "transactions" => {
                 let Transactions {
                     start_date,

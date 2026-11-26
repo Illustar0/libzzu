@@ -1,4 +1,4 @@
-//! 校园卡会话认证、余额与账单流水查询、宿舍层级检索以及电费查询与充值。
+//! 校园卡会话认证、余额与在线校园码、账单流水查询、宿舍层级检索以及电费查询与充值。
 
 use std::{
     collections::BTreeMap,
@@ -15,9 +15,11 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{Error, Result, auth::CasClient, crypto, http};
 
+mod code;
 mod recharge;
 mod transaction;
 
+pub use code::PaymentCode;
 pub use recharge::{
     PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeConfig, RechargeOrder,
 };
@@ -126,6 +128,7 @@ impl Session {
 struct EcardState {
     session: Option<Session>,
     default_room: Option<RoomId>,
+    qr_refresh_seconds: Option<u32>,
 }
 
 /// 校园卡与宿舍电控服务客户端。

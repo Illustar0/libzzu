@@ -32,7 +32,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | 运行时 | `zzu_runtime_new`、`zzu_runtime_free` | 创建与释放后台异步运行时（通常每进程一个） |
 | CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、个人信息与业务系统单点登录 |
 | 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、学期课表与教室占用查询 |
-| 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、账单流水、宿舍电费查询与充值、校园卡充值下单 |
+| 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、在线校园码、账单流水、宿舍电费查询与充值、校园卡充值下单 |
 | 校园邮箱客户端 | `zzu_mail_new`、`zzu_mail_free`、`zzu_mail_call`、`zzu_mail_call_blocking` | 校园邮箱会话登录、网页版入口地址与收件箱未读邮件数查询 |
 | Portal 探测 | `zzu_portal_discover`、`zzu_portal_discover_blocking` | 自动探测当前网络下的校园网 Portal 地址与本机内网 IP |
 | Portal 客户端 | `zzu_portal_new`、`zzu_portal_free`、`zzu_portal_call`、`zzu_portal_call_blocking` | 校园网 `eportal` 终端上线认证 |
@@ -137,7 +137,7 @@ zzu_runtime_free(runtime);
 - **线程安全与读写并发**：所有导出函数均支持多线程并发调用。各客户端按状态可变性采用不同的内部同步策略：
   - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuMailClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
     - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`timetable`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
-    - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`transactions`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话与默认房间缓存时短暂持状态锁，释放锁后再发网络请求）。
+    - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`payment_code`、`transactions`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话、默认房间与校园码刷新配置缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
   - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_sso_url` 在读取令牌并释放会话锁后并发执行网络请求。
@@ -352,6 +352,7 @@ zzu_runtime_free(runtime);
 | `is_logged_in` | 无 | `boolean` | 返回校园卡客户端是否已建立会话 |
 | `default_room` | 无 | `string` | 查询并缓存当前账号绑定的默认宿舍房间号（格式为 `area-building--level-room`） |
 | `balance` | 无 | `string` | 查询校园卡账户余额（单位：元，十进制字符串，如 `"12.34"`） |
+| `payment_code` | 无 | `PaymentCode` | 获取在线校园码（动态付款码与通行码）及服务端建议刷新秒数；在线码未开放时返回 `ZZU_REMOTE_ERROR` |
 | `transactions` | `startDate: "YYYY-MM-DD"`、`endDate: "YYYY-MM-DD"`、`kind?: "consumption" \| "recharge" \| "subsidy"`、`page?: uint32`、`pageSize?: uint32` | `Transaction[]` | 分页查询指定日期闭区间内的校园卡账单流水。`kind` 省略时查询全部类别；`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `30`；`page == 0`、`pageSize == 0` 或 `startDate > endDate` 返回 `ZZU_INVALID_INPUT`。远端不返回总条数，翻页至返回数组长度小于 `pageSize`（或为空数组）即到达末页。`recharge_energy` 超时或取消后可通过本方法核对最新扣款记录 |
 | `locations` | `parent: string` | `{"id": string, "name": string}[]` | 按层级检索电控位置目录（按 `id` 字典序升序排列，`area`、`building`、`level` 各段均非空且不含 `-`）：`parent` 依次传 `""`（区域）、`"area"`（如 `"1"`，楼栋）、`"area-building"`（如 `"1-2"`，单元/楼层）、`"area-building--level"`（如 `"1-2--3"`，房间，返回的 `id` 为合法房间号）；格式不符返回 `ZZU_INVALID_INPUT` |
 | `remaining_energy` | `room?: string` | `number` | 查询指定房间（省略时取 `default_room`）的剩余电量（`float64`，单位：度） |
@@ -361,8 +362,9 @@ zzu_runtime_free(runtime);
 | `payment_channels` | `order: Order` | `Channel[]` | 查询该订单在学校收银台可用的支付渠道列表 |
 | `prepare_payment` | `order: Order`、`channel: Channel`、`context?: PaymentContext` | `PaymentAction` | 向收银台预下单并提取最终拉起第三方支付的跳转或表单动作 |
 
-账单流水、充值与支付数据结构：
+校园码、账单流水、充值与支付数据结构：
 
+- **`PaymentCode`**：`{"code": string, "balance": string, "refreshSeconds": uint32}`。其中 `code` 为用于渲染二维码图像的原始动态码字符串（含实时支付凭据，**严禁写入日志**），`balance` 为当前校园卡余额（十进制元字符串），`refreshSeconds` 为建议自动刷新周期（秒，如 `60`）。
 - **`Transaction`**：`{"id": string, "time": string, "amount": string, "merchantName": string, "summary": string, "isRefund": boolean}`。其中 `id` 为交易流水号，`time` 为 `Asia/Shanghai` 时区的 RFC 9557 时间字符串，`amount` 为带符号精确十进制元字符串（消费通常为负数如 `"-12.50"`，充值与补助通常为正数如 `"50.00"`），`isRefund` 表示是否为退款记录。
 
 - **`Order`**：包含公开字段 `id`（`string`，订单号）、`amount`（`uint32`，充值金额，单位元）、`checkoutUrl`（`string`，默认收银台 HTTPS 地址）以及内部不透明字段 `payment`。调用 `payment_channels`、`prepare_payment` 或 `zzu_recharge_order_checkout_url_for` 时将整个 `Order` JSON 对象原样传回即可；该对象可序列化保存并在新进程中恢复以继续支付，但内部含支付凭据，**严禁写入日志**。
