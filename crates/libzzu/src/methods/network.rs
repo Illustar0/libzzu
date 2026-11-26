@@ -59,6 +59,13 @@ struct PortalLogin {
     encryption: PortalEncryption,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortalLogout {
+    #[serde(default)]
+    encryption: PortalEncryption,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PortalAuth {
@@ -102,6 +109,11 @@ impl Service for PortalClient {
                     encryption,
                 } = parse(params)?;
                 let auth = self.login(&account, &password, encryption).await?;
+                reply(&PortalAuth::from(auth))
+            }
+            "logout" => {
+                let PortalLogout { encryption } = parse(params)?;
+                let auth = self.logout(encryption).await?;
                 reply(&PortalAuth::from(auth))
             }
             "isps" => reply(&self.isps().await?),

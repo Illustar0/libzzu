@@ -188,32 +188,32 @@ pub struct IspInfo {
     pub suffix: String,
 }
 
-/// Portal 登录请求参数的编码方式。
+/// Portal 认证与下线请求参数的编码方式。
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PortalEncryption {
-    /// 明文参数传输（密码仅做标准 Base64 编码）。
+    /// 明文参数传输（登录密码做标准 Base64 编码）。
     #[default]
     Plain,
     /// 使用客户端 IP 字符异或密钥对查询参数逐字符编码（附带 `encrypt=1` 标记）。
     Xor,
 }
 
-/// Portal 登录接口返回的 JSONP 认证结果。
+/// Portal 认证或下线接口返回的 JSONP 结果。
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AuthResult {
-    /// 服务端结果码（`1` 表示认证成功）。
+    /// 服务端结果码（`1` 表示操作成功）。
     pub result: i64,
     /// 服务端返回的状态说明消息。
     #[serde(rename = "msg")]
     pub message: String,
-    /// 认证失败或特殊状态时附带的可选细分返回码。
+    /// 操作失败或特殊状态时附带的可选细分返回码。
     #[serde(rename = "retCode", alias = "ret_code", default)]
     pub ret_code: Option<i64>,
 }
 
 impl AuthResult {
-    /// 判断本次 Portal 认证请求是否成功（即 `result == 1`）。
+    /// 判断本次 Portal 认证或下线请求是否成功（即 `result == 1`）。
     #[must_use]
     pub fn is_success(&self) -> bool {
         self.result == 1
@@ -309,26 +309,7 @@ impl PortalClient {
         encryption: PortalEncryption,
     ) -> Result<AuthResult> {
         let user_ip = self.user_ip.to_string();
-        let xor_key = user_ip
-            .chars()
-            .fold(0, |key, character| key ^ u32::from(character));
-        let encode = |text: &str| -> Result<String> {
-            match encryption {
-                PortalEncryption::Plain => Ok(text.into()),
-                PortalEncryption::Xor => {
-                    if text.chars().count() > 512 {
-                        return Err(Error::invalid_input(
-                            "Portal 加密字段不能超过 512 个字符".into(),
-                        ));
-                    }
-                    let mut encoded = String::new();
-                    for character in text.chars() {
-                        let _ = write!(encoded, "{:02x}", u32::from(character) ^ xor_key);
-                    }
-                    Ok(encoded)
-                }
-            }
-        };
+        let encode = |text: &str| encode_portal_field(&user_ip, encryption, text);
         let query = PortalLogin {
             callback: encode("dr1003")?,
             login_method: encode("1")?,
@@ -347,11 +328,49 @@ impl PortalClient {
             encrypt: matches!(encryption, PortalEncryption::Xor).then_some("1"),
             v: rand::thread_rng().gen_range(500..=10499),
         };
+        self.send_portal_jsonp("/eportal/portal/login", &query)
+            .await
+    }
+
+    /// 向校园网 Portal 服务器发起当前终端（`user_ip`）下线注销请求。
+    ///
+    /// 按 `eportal` 协议直接以配置在客户端上的 `user_ip` 通知接入控制器（`ac_logout = 1`）释放会话，
+    /// 无需再次提供校园网账号密码，也无需登录自助服务后台。
+    ///
+    /// # Errors
+    ///
+    /// 选择 [`PortalSourceAddress::UserIp`] 而 `user_ip` 无法绑定、网络传输失败、HTTP 状态非成功或返回的 JSONP 报文无法解析时返回错误。
+    pub async fn logout(&self, encryption: PortalEncryption) -> Result<AuthResult> {
+        let user_ip = self.user_ip.to_string();
+        let encode = |text: &str| encode_portal_field(&user_ip, encryption, text);
+        let query = PortalLogout {
+            callback: encode("dr1004")?,
+            login_method: encode("1")?,
+            user_account: encode("drcom")?,
+            user_password: encode("123")?,
+            ac_logout: encode("1")?,
+            register_mode: encode("1")?,
+            wlan_user_ip: encode(&user_ip)?,
+            wlan_user_ipv6: "",
+            wlan_vlan_id: encode("0")?,
+            wlan_user_mac: encode("000000000000")?,
+            wlan_ac_ip: "",
+            wlan_ac_name: "",
+            js_version: encode("4.2.2")?,
+            lang: encode("zh-cn")?,
+            encrypt: matches!(encryption, PortalEncryption::Xor).then_some("1"),
+            v: rand::thread_rng().gen_range(500..=10499),
+        };
+        self.send_portal_jsonp("/eportal/portal/logout", &query)
+            .await
+    }
+
+    async fn send_portal_jsonp<Q: Serialize>(&self, path: &str, query: &Q) -> Result<AuthResult> {
         let url = self
             .base_url
-            .join("/eportal/portal/login")
+            .join(path)
             .map_err(|error| Error::invalid_input(error.to_string()))?;
-        let request = self.http.get(url).query(&query).query(&[("lang", "zh")]);
+        let request = self.http.get(url).query(query).query(&[("lang", "zh")]);
         let response = http::send(request).await?.require_success()?;
         parse_jsonp(response.body()).map_err(|error| error.with_request(response.context))
     }
@@ -438,6 +457,49 @@ struct PortalLogin {
     #[serde(skip_serializing_if = "Option::is_none")]
     encrypt: Option<&'static str>,
     v: u32,
+}
+
+#[derive(Serialize)]
+struct PortalLogout {
+    callback: String,
+    login_method: String,
+    user_account: String,
+    user_password: String,
+    ac_logout: String,
+    register_mode: String,
+    wlan_user_ip: String,
+    wlan_user_ipv6: &'static str,
+    wlan_vlan_id: String,
+    wlan_user_mac: String,
+    wlan_ac_ip: &'static str,
+    wlan_ac_name: &'static str,
+    #[serde(rename = "jsVersion")]
+    js_version: String,
+    lang: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    encrypt: Option<&'static str>,
+    v: u32,
+}
+
+fn encode_portal_field(user_ip: &str, encryption: PortalEncryption, text: &str) -> Result<String> {
+    match encryption {
+        PortalEncryption::Plain => Ok(text.into()),
+        PortalEncryption::Xor => {
+            if text.chars().count() > 512 {
+                return Err(Error::invalid_input(
+                    "Portal 加密字段不能超过 512 个字符".into(),
+                ));
+            }
+            let xor_key = user_ip
+                .chars()
+                .fold(0, |key, character| key ^ u32::from(character));
+            let mut encoded = String::new();
+            for character in text.chars() {
+                let _ = write!(encoded, "{:02x}", u32::from(character) ^ xor_key);
+            }
+            Ok(encoded)
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -1045,5 +1107,80 @@ mod tests {
         assert!(error.is_decode());
         assert!(error.request().is_some());
         server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn portal_client_logout_supports_plain_and_xor_queries() {
+        let (addr, server) = spawn_stub_http_server(vec![
+            (
+                "application/javascript; charset=utf-8",
+                r#"dr1004({"result":1,"msg":"注销成功！"});"#.as_bytes().to_vec(),
+            ),
+            (
+                "application/javascript; charset=utf-8",
+                r#"dr1004({"result":0,"msg":"终端不在线","ret_code":2});"#
+                    .as_bytes()
+                    .to_vec(),
+            ),
+        ]);
+
+        let client = PortalClient::with_http_client(
+            &format!("http://{addr}"),
+            "10.171.51.216".parse().unwrap(),
+            Client::new(),
+        )
+        .unwrap();
+
+        let plain = client.logout(PortalEncryption::Plain).await.unwrap();
+        assert!(plain.is_success());
+        assert_eq!(plain.message, "注销成功！");
+
+        let xor = client.logout(PortalEncryption::Xor).await.unwrap();
+        assert!(!xor.is_success());
+        assert_eq!(xor.ret_code, Some(2));
+
+        let requests = server.join().unwrap();
+        let plain_url = Url::parse(&format!(
+            "http://stub{}",
+            requests[0].split_whitespace().nth(1).unwrap()
+        ))
+        .unwrap();
+        assert_eq!(plain_url.path(), "/eportal/portal/logout");
+        let plain_query: BTreeMap<_, _> = plain_url.query_pairs().into_owned().collect();
+        assert_eq!(
+            plain_query.get("callback").map(String::as_str),
+            Some("dr1004")
+        );
+        assert_eq!(
+            plain_query.get("user_account").map(String::as_str),
+            Some("drcom")
+        );
+        assert_eq!(
+            plain_query.get("user_password").map(String::as_str),
+            Some("123")
+        );
+        assert_eq!(plain_query.get("ac_logout").map(String::as_str), Some("1"));
+        assert_eq!(
+            plain_query.get("register_mode").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            plain_query.get("wlan_user_ip").map(String::as_str),
+            Some("10.171.51.216")
+        );
+        assert!(!plain_query.contains_key("encrypt"));
+
+        let xor_url = Url::parse(&format!(
+            "http://stub{}",
+            requests[1].split_whitespace().nth(1).unwrap()
+        ))
+        .unwrap();
+        assert_eq!(xor_url.path(), "/eportal/portal/logout");
+        let xor_query: BTreeMap<_, _> = xor_url.query_pairs().into_owned().collect();
+        assert_eq!(xor_query.get("encrypt").map(String::as_str), Some("1"));
+        assert_ne!(
+            xor_query.get("wlan_user_ip").map(String::as_str),
+            Some("10.171.51.216")
+        );
     }
 }

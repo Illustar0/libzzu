@@ -35,7 +35,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、在线校园码、账单流水、宿舍电费查询与充值、校园卡充值下单 |
 | 校园邮箱客户端 | `zzu_mail_new`、`zzu_mail_free`、`zzu_mail_call`、`zzu_mail_call_blocking` | 校园邮箱会话登录、网页版入口地址与收件箱未读邮件数查询 |
 | Portal 探测 | `zzu_portal_discover`、`zzu_portal_discover_blocking` | 自动探测当前网络下的校园网 Portal 地址与本机内网 IP |
-| Portal 客户端 | `zzu_portal_new`、`zzu_portal_free`、`zzu_portal_call`、`zzu_portal_call_blocking` | 校园网 `eportal` 终端上线认证 |
+| Portal 客户端 | `zzu_portal_new`、`zzu_portal_free`、`zzu_portal_call`、`zzu_portal_call_blocking` | 校园网 `eportal` 终端上线认证与本机下线 |
 | 自助服务客户端 | `zzu_self_service_new`、`zzu_self_service_free`、`zzu_self_service_call`、`zzu_self_service_call_blocking` | 校园网在线终端列表查询与强制下线 |
 | 调用控制 | `zzu_call_cancel`、`zzu_call_free` | 请求取消在途异步调用、释放调用句柄 |
 | 本地纯函数 | `zzu_timetable_to_calendar`、`zzu_room_id_parse`、`zzu_recharge_order_checkout_url_for` | 无需运行时与客户端的同步数据转换与校验 |
@@ -401,9 +401,10 @@ zzu_runtime_free(runtime);
 | 方法名 | 参数 JSON 字段 | 结果 JSON 类型 | 行为说明 |
 | --- | --- | --- | --- |
 | `login` | `account: string`、`password: string`、`encryption?: "plain" \| "xor"` | `PortalAuth` | 向校园网 `eportal` 发起终端上线认证；`encryption` 默认 `"plain"`，选 `"xor"` 时待编码字段不得超过 512 个字符。融合宽带账号须在 `account` 后自行附带运营商后缀（如 `@cmcc`、`@unicom`、`@telecom`，可通过 `isps` 查询） |
+| `logout` | `encryption?: "plain" \| "xor"` | `PortalAuth` | 向校园网 `eportal` 发起当前终端（`userIp`）下线注销，无需账号密码；`encryption` 默认 `"plain"` |
 | `isps` | 无 | `IspInfo[]` | 查询当前校园网 Portal 页面提供的运营商列表及其登录账号后缀；若门户页面模板不含运营商选项则返回空数组 `[]` |
 
-`PortalAuth` 结构为 `{"isSuccess": boolean, "result": int64, "message": string, "retCode": int64 | null}`。注意：只要 HTTP 请求与 JSONP 报文正常解析，本调用即返回 `ZZU_OK`；终端认证是否通过须检查结果中的 **`isSuccess`**（即 `result == 1`）。
+`PortalAuth` 结构为 `{"isSuccess": boolean, "result": int64, "message": string, "retCode": int64 | null}`。注意：只要 HTTP 请求与 JSONP 报文正常解析，调用即返回 `ZZU_OK`；终端上线或下线是否成功须检查结果中的 **`isSuccess`**（即 `result == 1`）。
 
 `IspInfo` 结构为 `{"name": string, "suffix": string}`，其中 `name` 为运营商显示名称，`suffix` 为附在登录账号后的运营商后缀（普通校园网通常为空字符串 `""`）。
 

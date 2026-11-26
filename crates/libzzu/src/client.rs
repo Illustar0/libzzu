@@ -281,12 +281,13 @@ mod tests {
     use super::*;
     use crate::{
         ZZU_AUTHENTICATION_ERROR, ZZU_PANIC, ZZU_TIMEOUT, ZZU_UNKNOWN_METHOD, ZzuCasClient,
-        ZzuEasClient, ZzuEcardClient, ZzuMailClient, ZzuRuntime, zzu_buffer_data, zzu_buffer_free,
-        zzu_buffer_len, zzu_cas_call, zzu_cas_call_blocking, zzu_cas_free, zzu_cas_new,
-        zzu_eas_call, zzu_eas_free, zzu_eas_new, zzu_ecard_call, zzu_ecard_free, zzu_ecard_new,
-        zzu_mail_call, zzu_mail_call_blocking, zzu_mail_free, zzu_mail_new,
-        zzu_portal_discover_blocking, zzu_recharge_order_checkout_url_for, zzu_room_id_parse,
-        zzu_runtime_free, zzu_runtime_new, zzu_timetable_to_calendar,
+        ZzuEasClient, ZzuEcardClient, ZzuMailClient, ZzuPortalClient, ZzuRuntime, zzu_buffer_data,
+        zzu_buffer_free, zzu_buffer_len, zzu_cas_call, zzu_cas_call_blocking, zzu_cas_free,
+        zzu_cas_new, zzu_eas_call, zzu_eas_free, zzu_eas_new, zzu_ecard_call, zzu_ecard_free,
+        zzu_ecard_new, zzu_mail_call, zzu_mail_call_blocking, zzu_mail_free, zzu_mail_new,
+        zzu_portal_call, zzu_portal_discover_blocking, zzu_portal_free, zzu_portal_new,
+        zzu_recharge_order_checkout_url_for, zzu_room_id_parse, zzu_runtime_free, zzu_runtime_new,
+        zzu_timetable_to_calendar,
     };
 
     type Completion = (ZzuStatus, Value);
@@ -422,6 +423,24 @@ mod tests {
             assert_eq!(status, ZZU_OK);
             mail
         }
+
+        fn portal(&self) -> *mut ZzuPortalClient {
+            let mut portal = ptr::null_mut();
+            let config =
+                br#"{"baseUrl":"http://127.0.0.1:801","userIp":"10.0.0.2","sourceAddress":"system"}"#;
+            // SAFETY: The runtime handle and config slice are live, and the output slot is writable.
+            let status = unsafe {
+                zzu_portal_new(
+                    self.runtime,
+                    config.as_ptr(),
+                    config.len(),
+                    &raw mut portal,
+                    ptr::null_mut(),
+                )
+            };
+            assert_eq!(status, ZZU_OK);
+            portal
+        }
     }
 
     impl Drop for Fixture {
@@ -523,6 +542,7 @@ mod tests {
         let fixture = Fixture::new();
         let eas = fixture.eas();
         let ecard = fixture.ecard();
+        let portal = fixture.portal();
         assert_eq!(
             call_cas(fixture.cas, c"verify_sms", b"[not json").0,
             ZZU_INVALID_INPUT
@@ -564,10 +584,21 @@ mod tests {
             .0,
             ZZU_INVALID_INPUT
         );
-        // SAFETY: Both handles came from their constructors and are released once.
+        assert_eq!(
+            call_async(
+                zzu_portal_call,
+                portal,
+                c"logout",
+                br#"{"encryption":"aes"}"#
+            )
+            .0,
+            ZZU_INVALID_INPUT
+        );
+        // SAFETY: All handles came from their constructors and are released once.
         unsafe {
             zzu_eas_free(eas);
             zzu_ecard_free(ecard);
+            zzu_portal_free(portal);
         }
     }
 
