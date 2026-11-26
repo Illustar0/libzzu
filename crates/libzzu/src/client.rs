@@ -591,6 +591,20 @@ mod tests {
         assert!(ics.contains("BEGIN:VALARM"));
         assert!(ics.contains("SUMMARY:程序设计"));
 
+        let mut with_units = params.clone();
+        with_units["timetable"]["units"] = json!([
+            {"index": 1, "nameZh": "1", "dayPart": "morning", "segmentIndex": 1, "startTime": "08:00:00", "endTime": "08:45:00"},
+            {"index": 2, "nameZh": "2", "dayPart": "morning", "segmentIndex": 1, "startTime": "08:55:00", "endTime": "09:40:00"}
+        ]);
+        assert_eq!(
+            compute_json(
+                zzu_timetable_to_calendar,
+                &serde_json::to_vec(&with_units).unwrap()
+            )
+            .0,
+            ZZU_OK
+        );
+
         let bad_options = json!({
             "timetable": params["timetable"],
             "options": {"weeks": [0]}

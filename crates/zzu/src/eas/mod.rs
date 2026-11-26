@@ -12,7 +12,7 @@ pub use classroom::{
     ClassroomQuery, DEFAULT_CLASSROOM_CONCURRENCY, DEFAULT_CLASSROOM_PAGE_SIZE, RoomActivityType,
     RoomOccupation, RoomType,
 };
-pub use common::NamedEntity;
+pub use common::{CourseUnit, DayPart, NamedEntity};
 pub use semester::{Semester, SemesterSeason};
 pub use timetable::{
     ClassOrigin, ClassSession, Course, ExperimentProject, PeriodInfo, Room, ScheduleState,
@@ -20,7 +20,9 @@ pub use timetable::{
     TeachingClass, Timetable, TimetableOptions, WeekView,
 };
 
-use futures_util::future::try_join4;
+use std::collections::BTreeMap;
+
+use futures_util::future::{try_join, try_join5};
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
@@ -149,7 +151,7 @@ impl UndergradEasClient {
     /// 查询指定学期的完整课表（`semester_id` 为 `None` 时取 [`Self::current_semester`]）。
     ///
     /// 当前学期直接复用登录时缓存的学期信息，其他学期会先拉取学期列表。
-    /// 返回的 [`Timetable`] 包含学期校历、全部教学班与按时间排序的排课场次，
+    /// 返回的 [`Timetable`] 包含学期校历、适用的每日节次作息、全部教学班与按时间排序的排课场次，
     /// 按周查询、冲突检测与日历导出均在本地完成。
     ///
     /// # Errors
@@ -173,21 +175,29 @@ impl UndergradEasClient {
                 .find(|semester| semester.id == id)
                 .ok_or_else(|| Error::not_found(format!("semester_id={id}")))?,
         };
-        let request = self
-            .request(&format!(
-                "/eams-micro-server/api/v1/lesson/student/course-table/{}",
-                semester.id
-            ))
-            .await?
-            .query(&[("hasExperiment", options.include_experiments)]);
-        let response = http::json(request).await?;
-        let entries: Vec<RawCourseTableEntry> = http::data(response, "result")?;
-        build_timetable(semester, entries)
+        let token = self.cas.user_token().await?;
+        let course_table_path = format!(
+            "/eams-micro-server/api/v1/lesson/student/course-table/{}",
+            semester.id
+        );
+        let fetch_entries = async {
+            let request = self
+                .get_with_token(&token, &course_table_path)
+                .query(&[("hasExperiment", options.include_experiments)]);
+            let response = http::json(request).await?;
+            http::data::<Vec<RawCourseTableEntry>>(response, "result")
+        };
+        let fetch_layouts = self.fetch_with_token::<BTreeMap<String, Vec<CourseUnit>>>(
+            &token,
+            "/eams-micro-server/api/v1/system/get-all-course-units",
+        );
+        let (entries, unit_layouts) = try_join(fetch_entries, fetch_layouts).await?;
+        build_timetable(semester, entries, unit_layouts)
     }
 
-    /// 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型与楼层）。
+    /// 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型、楼层与标准节次作息）。
     ///
-    /// 内部并发请求 4 个目录接口，返回扁平列表供前端渲染筛选项及按
+    /// 内部并发请求 5 个目录接口，返回扁平列表供前端渲染筛选项、绘制节次概览及按
     /// [`ClassroomOccupancy::building_id`] 反查教学楼信息。
     ///
     /// # Errors
@@ -197,7 +207,7 @@ impl UndergradEasClient {
     pub async fn classroom_catalog(&self) -> Result<ClassroomCatalog> {
         self.current_semester()?;
         let token = self.cas.user_token().await?;
-        let (campuses, buildings, room_types, floors) = try_join4(
+        let (campuses, buildings, room_types, floors, units) = try_join5(
             self.fetch_with_token::<Vec<Campus>>(
                 &token,
                 "/eams-micro-server/api/v1/room/place/campus",
@@ -214,14 +224,13 @@ impl UndergradEasClient {
                 &token,
                 "/eams-micro-server/api/v1/room/place/floors",
             ),
+            self.fetch_with_token::<Vec<CourseUnit>>(
+                &token,
+                "/eams-micro-server/api/v1/room/system/course-units",
+            ),
         )
         .await?;
-        Ok(ClassroomCatalog {
-            campuses,
-            buildings,
-            room_types,
-            floors,
-        })
+        ClassroomCatalog::new(campuses, buildings, room_types, floors, units)
     }
 
     async fn fetch_classroom_page(

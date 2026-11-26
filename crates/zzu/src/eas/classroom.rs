@@ -5,7 +5,7 @@ use jiff::{Zoned, civil::Date};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use super::common::{deserialize_null_default, parse_time};
+use super::common::{CourseUnit, deserialize_null_default, normalize_course_units, parse_time};
 use crate::{Error, Result};
 
 /// 教室占用分页查询的默认每页条数。
@@ -75,12 +75,12 @@ pub struct RoomType {
     pub enabled: bool,
 }
 
-/// 教室占用查询所需的筛选目录快照。
+/// 教室占用查询所需的筛选目录与标准节次作息快照。
 ///
-/// 各列表保持扁平结构，既可用于构建前端筛选项，也便于通过 [`ClassroomOccupancy::building_id`]
-/// 反查教学楼与所属校区信息。
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// 各列表保持扁平结构，既可用于构建前端筛选项与节次网格，也便于通过
+/// [`ClassroomOccupancy::building_id`] 反查教学楼与所属校区信息。
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", try_from = "RawClassroomCatalog")]
 pub struct ClassroomCatalog {
     /// 全部校区列表。
     pub campuses: Vec<Campus>,
@@ -90,6 +90,51 @@ pub struct ClassroomCatalog {
     pub room_types: Vec<RoomType>,
     /// 可选楼层列表。
     pub floors: Vec<i32>,
+    /// 空教室筛选与节次概览使用的标准作息列表（按节次序号升序排列）。
+    pub units: Vec<CourseUnit>,
+}
+
+impl ClassroomCatalog {
+    pub(super) fn new(
+        campuses: Vec<Campus>,
+        buildings: Vec<Building>,
+        room_types: Vec<RoomType>,
+        floors: Vec<i32>,
+        units: Vec<CourseUnit>,
+    ) -> Result<Self> {
+        Ok(Self {
+            campuses,
+            buildings,
+            room_types,
+            floors,
+            units: normalize_course_units(units)?,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawClassroomCatalog {
+    campuses: Vec<Campus>,
+    buildings: Vec<Building>,
+    room_types: Vec<RoomType>,
+    floors: Vec<i32>,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    units: Vec<CourseUnit>,
+}
+
+impl TryFrom<RawClassroomCatalog> for ClassroomCatalog {
+    type Error = Error;
+
+    fn try_from(raw: RawClassroomCatalog) -> Result<Self> {
+        ClassroomCatalog::new(
+            raw.campuses,
+            raw.buildings,
+            raw.room_types,
+            raw.floors,
+            raw.units,
+        )
+    }
 }
 
 /// 教室占用查询条件。
@@ -516,6 +561,45 @@ mod tests {
 
         let restored: Building = serde_json::from_value(serialized).unwrap();
         assert_eq!(restored, building);
+    }
+
+    #[test]
+    fn classroom_catalog_sorts_units_and_roundtrips_json() {
+        let raw = json!({
+            "campuses": [{
+                "id": 2, "code": "01", "nameZh": "主校区", "nameEn": null,
+                "remark": null, "enabled": true
+            }],
+            "buildings": [{
+                "id": 5, "code": "北1", "nameZh": "北1", "nameEn": null,
+                "campusAssoc": 2, "remark": null, "enabled": true
+            }],
+            "roomTypes": [{
+                "id": 2, "code": "02", "nameZh": "多媒体教室", "nameEn": null,
+                "enabled": true
+            }],
+            "floors": [1, 2, 3],
+            "units": [
+                {
+                    "indexNo": 10, "nameZh": "10", "nameEn": "10",
+                    "dayPart": "EVENING", "segmentIndex": 5,
+                    "startTime": 1955, "endTime": 2040
+                },
+                {
+                    "indexNo": 1, "nameZh": "1", "nameEn": "1",
+                    "dayPart": "MORNING", "segmentIndex": 1,
+                    "startTime": 800, "endTime": 845
+                }
+            ]
+        });
+        let catalog: ClassroomCatalog = serde_json::from_value(raw).unwrap();
+        let indices: Vec<u8> = catalog.units.iter().map(|unit| unit.index).collect();
+        assert_eq!(indices, [1, 10]);
+        assert_eq!(catalog.units[1].end_time.to_string(), "20:40:00");
+
+        let serialized = serde_json::to_value(&catalog).unwrap();
+        let restored: ClassroomCatalog = serde_json::from_value(serialized).unwrap();
+        assert_eq!(restored, catalog);
     }
 
     #[test]

@@ -208,8 +208,9 @@ zzu_runtime_free(runtime);
   - **请求与配置拒绝未知字段**：所有带参方法与配置对象默认开启未知字段校验，字段名拼写错误（如误传 `"semester_id"`）会立即返回 `ZZU_INVALID_INPUT`，绝不静默忽略而退回默认值。仅三处例外：无参方法不解析 `params`；`ZzuCasClient` 的 `set_tokens` 忽略多余字段并兼容 `"idToken"` 别名；校园卡支付相关方法的 `order` 字段允许携带 `create_recharge_order` 返回对象中的 `id` 与内部扩展字段。
   - **响应须忽略未知字段**：次版本升级可能在任意响应对象中新增字段，SDK 反序列化时**必须**忽略未知属性。
 - **金额精度**：查询返回的货币金额（如 `balance`）一律编码为精确的十进制字符串（如 `"12.34"`），SDK 须映射为高精度十进制类型（如 `Decimal`、`BigDecimal`），**不得**转换为二进制浮点数。充值参数与面额配置中的 `amount`、`amounts` 单位都是元，不是分，取值为正整数（`uint32`）。
-- **日期与带时区时间**：
+- **日期、时刻与带时区时间**：
   - 公历日期采用 `YYYY-MM-DD` 字符串（如 `"2026-10-26"`）。
+  - 不绑定日期的每日时刻（如作息节次起止时间）采用 ISO 8601 `HH:MM:SS` 字符串（如 `"08:00:00"`，反序列化同时兼容 `"HH:MM"`），小数秒按需输出，最多 9 位。
   - 带时区时间采用 RFC 9557 格式字符串（如 `"2026-10-26T08:00:00+08:00[Asia/Shanghai]"`），小数秒按需输出，最多 9 位（纳秒）；尽管当前课表时间精确到分、在线设备登录时间精确到秒，SDK 解析器仍不应假定不含小数秒。
 
 ---
@@ -305,8 +306,8 @@ zzu_runtime_free(runtime);
 | `is_logged_in` | 无 | `boolean` | 返回教务客户端是否已完成登录 |
 | `current_semester` | 无 | `Semester` | 直接返回 `login` 时缓存的当前学期对象（无网络请求） |
 | `semesters` | 无 | `Semester[]` | 查询当前学生可见的全部学期列表 |
-| `timetable` | `semesterId?: int64`、`includeExperiments?: boolean` | `Timetable` | 查询指定学期（省略时取当前学期）的完整课表；`includeExperiments` 默认 `true`；`semesterId` 不存在时返回 `ZZU_NOT_FOUND` |
-| `classroom_catalog` | 无 | `ClassroomCatalog` | 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型与楼层），返回扁平列表供前端渲染筛选项及按 `buildingId` 反查教学楼信息 |
+| `timetable` | `semesterId?: int64`、`includeExperiments?: boolean` | `Timetable` | 查询指定学期（省略时取当前学期）的完整课表，内含匹配的每日节次作息、全部教学班与排课场次；`includeExperiments` 默认 `true`；`semesterId` 不存在时返回 `ZZU_NOT_FOUND` |
+| `classroom_catalog` | 无 | `ClassroomCatalog` | 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型、楼层与标准节次作息），返回扁平列表供前端渲染筛选项、绘制节次概览及按 `buildingId` 反查教学楼信息 |
 | `classroom_occupancies_page` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`page?: uint32`、`pageSize?: uint32` | `ClassroomPage` | 按页查询符合筛选条件的教室及当日占用记录。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `44`；`page == 0`、`pageSize == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。**性能警告**：上游 API 存在极其严重的性能问题，响应耗时随 `pageSize` 增大而非线性增大（`100` 约 1 秒以上，`1000` 约 25 秒以上），`44` 左右通常是单条均摊耗时最低的甜点值；不清楚后端特性时请保持默认，高占用率校区可酌情调小以降低单页尾延迟 |
 | `classroom_occupancies` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`pageSize?: uint32`、`concurrency?: uint64` | `ClassroomOccupancy[]` | 先以 `pageSize`（默认 `44`）拉取第 1 页获知总页数，再以 `concurrency`（默认 `8`）为并发上限并发拉取剩余分页，按页序合并并按教室 `id` 去重（任一页失败立即中止并返回错误）。`pageSize == 0`、`concurrency == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。不带空间筛选的整校查询（约 1658 间教室）在高占用时段可能接近默认 `15000` 毫秒时限，建议配合校区/教学楼筛选、放宽 `timeoutMs`，或在需要进度条与单页容错时改用 `classroom_occupancies_page` |
 
@@ -320,7 +321,8 @@ zzu_runtime_free(runtime);
 | 类型 | JSON 字段与类型 | 说明 |
 | --- | --- | --- |
 | `Semester` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`schoolYear: string`、`season: string`、`startDate: "YYYY-MM-DD"`、`endDate: "YYYY-MM-DD"`、`weekStartOnSunday: boolean`、`countInTerm: boolean`、`weekIndices: uint32[]` | 学期校历元数据；`season` 已知取值为 `"spring"`、`"autumn"`、`"summer"`、`"winter"`（须容忍未知字符串）；`weekIndices` 非零且唯一 |
-| `Timetable` | `semester: Semester`、`classes: TeachingClass[]`、`sessions: ClassSession[]` | 单个学期的完整课表；`sessions` 按上课时间升序排列，每条 `session.classId` 均存在于 `classes` 中 |
+| `Timetable` | `semester: Semester`、`units: CourseUnit[]`、`classes: TeachingClass[]`、`sessions: ClassSession[]` | 单个学期的完整课表；`units` 为本课表适用的每日节次作息（按 `index` 升序排列，作为 `zzu_timetable_to_calendar` 入参时可省略）；`sessions` 按上课时间升序排列，每条 `session.classId` 均存在于 `classes` 中 |
+| `CourseUnit` | `index: uint8`、`nameZh: string`、`nameEn: string \| null`、`dayPart: string`、`segmentIndex: uint8`、`startTime: "HH:MM:SS"`、`endTime: "HH:MM:SS"` | 单节作息时间与时段定义；`index` 与 `segmentIndex` 均从 `1` 起；`dayPart` 已知取值为 `"morning"`、`"noon"`、`"afternoon"`、`"evening"`（须容忍未知字符串）；`endTime` 严格晚于 `startTime` |
 | `TeachingClass` | `id: int64`、`code: string`、`origin: "regular" \| "standalone_experiment"`、`course: Course`、`courseType: NamedEntity \| null`、`cultivateType: NamedEntity \| null`、`department: NamedEntity \| null`、`campus: NamedEntity \| null`、`teachers: TeacherName[]`、`studentCount: uint32 \| null`、`scheduleState: string`、`scheduleText: string \| null`、`scheduleTextEn: string \| null`、`remark: string \| null` | 学期教学班元数据（含未排课课程与实验父班）；`scheduleState` 已知取值为 `"published"`、`"unpublished"`（须容忍未知字符串） |
 | `Course` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`credits: float64 \| null`、`periodInfo: PeriodInfo` | 课程基础元数据；独立实验课程的 `credits` 可能为 `null` |
 | `PeriodInfo` | `total: uint32`、`weeks: uint32 \| null`、`periodsPerWeek: uint32 \| null`、`theory: uint32 \| null`、`experiment: uint32 \| null`、`practice: uint32 \| null`、`design: uint32 \| null`、`machine: uint32 \| null`、`test: uint32 \| null` | 总学时、开课周数、周学时与分项学时统计 |
@@ -331,7 +333,7 @@ zzu_runtime_free(runtime);
 | `Room` | `id: int64`、`nameZh: string`、`nameEn: string \| null`、`building: NamedEntity`、`campus: NamedEntity`、`seatNumber: string \| null` | 上课教室及其所属教学楼与校区 |
 | `NamedEntity` | `id: int64`、`nameZh: string`、`nameEn: string \| null`、`code: string` | 通用教务命名实体 |
 | `CalendarExportOptions` | `weeks?: uint32[] \| null`、`classIds?: int64[] \| null`、`startDate?: "YYYY-MM-DD" \| null`、`endDate?: "YYYY-MM-DD" \| null`、`alarmMinutesBefore?: uint32[]`、`calendarName?: string \| null` | `zzu_timetable_to_calendar` 可选导出配置；`weeks` 不得含 `0`，`startDate` 不得晚于 `endDate` |
-| `ClassroomCatalog` | `campuses: Campus[]`、`buildings: Building[]`、`roomTypes: RoomType[]`、`floors: int32[]` | 教室占用筛选参照目录快照 |
+| `ClassroomCatalog` | `campuses: Campus[]`、`buildings: Building[]`、`roomTypes: RoomType[]`、`floors: int32[]`、`units: CourseUnit[]` | 教室占用筛选参照目录与标准节次作息快照；`units` 按 `index` 升序排列 |
 | `Campus` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`remark: string \| null`、`enabled: boolean` | 校区元数据 |
 | `Building` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`campusId: int64`、`remark: string \| null`、`enabled: boolean` | 教学楼元数据；`campusId` 映射自上游 `campusAssoc`（可能指向未出现在 `campuses` 中的默认校区 ID） |
 | `RoomType` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`enabled: boolean` | 教室类型元数据 |

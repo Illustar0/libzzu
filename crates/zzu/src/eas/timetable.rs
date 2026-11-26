@@ -9,7 +9,10 @@ use serde_json::Value;
 use crate::{Error, Result};
 
 use super::{
-    common::{NamedEntity, deserialize_null_default, parse_time, trim_non_empty},
+    common::{
+        CourseUnit, NamedEntity, deserialize_null_default, normalize_course_units, parse_time,
+        trim_non_empty,
+    },
     semester::Semester,
 };
 
@@ -539,13 +542,16 @@ impl TryFrom<RawClassSession> for ClassSession {
 
 /// 单个学期的完整课表数据。
 ///
-/// 排课场次按上课时间升序排列，每条 [`ClassSession::class_id`] 均对应 [`Self::classes`] 中的教学班。
+/// 包含与当前选课匹配的每日节次作息、全部教学班以及按上课时间升序排列的排课场次；
+/// 每条 [`ClassSession::class_id`] 均对应 [`Self::classes`] 中的教学班。
 /// 按周查询、冲突检测与日历导出均在本地完成，不发起网络请求。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", try_from = "RawTimetable")]
 pub struct Timetable {
     /// 课表所属学期校历。
     pub semester: Semester,
+    /// 本课表适用的每日节次作息列表（按节次序号升序排列）。
+    pub units: Vec<CourseUnit>,
     /// 本学期全部选修教学班（包含未排课课程与实验父班）。
     pub classes: Vec<TeachingClass>,
     /// 本学期全部排课场次（按上课时间升序排列）。
@@ -556,6 +562,8 @@ pub struct Timetable {
 #[serde(rename_all = "camelCase")]
 struct RawTimetable {
     semester: Semester,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    units: Vec<CourseUnit>,
     classes: Vec<TeachingClass>,
     sessions: Vec<ClassSession>,
 }
@@ -564,6 +572,7 @@ impl TryFrom<RawTimetable> for Timetable {
     type Error = Error;
 
     fn try_from(mut raw: RawTimetable) -> Result<Self> {
+        let units = normalize_course_units(raw.units)?;
         let mut class_ids = HashSet::with_capacity(raw.classes.len());
         for class in &raw.classes {
             if !class_ids.insert(class.id) {
@@ -585,6 +594,7 @@ impl TryFrom<RawTimetable> for Timetable {
         raw.sessions.sort_by_key(ClassSession::sort_key);
         Ok(Self {
             semester: raw.semester,
+            units,
             classes: raw.classes,
             sessions: raw.sessions,
         })
@@ -740,6 +750,12 @@ impl<'a> WeekView<'a> {
 }
 
 impl Timetable {
+    /// 按节次序号（从 1 开始）查找对应的作息时间定义。
+    #[must_use]
+    pub fn unit(&self, index: u8) -> Option<&CourseUnit> {
+        self.units.iter().find(|unit| unit.index == index)
+    }
+
     /// 按教学班 ID 查找教学班元数据。
     #[must_use]
     pub fn class(&self, class_id: i64) -> Option<&TeachingClass> {
@@ -970,6 +986,8 @@ pub(super) struct RawCourseTableEntry {
     code: String,
     #[serde(default)]
     biz_type_id: Option<i64>,
+    #[serde(default)]
+    time_table_layout_assoc: Option<i64>,
     course: RawCourse,
     #[serde(default)]
     course_type: Option<RawNamedEntity>,
@@ -1128,21 +1146,18 @@ struct SessionMergeKey {
     experiment_project_id: Option<i64>,
 }
 
-/// 将上游 `course-table` 响应整理为 [`Timetable`]。
+/// 将上游 `course-table` 与全局节次作息响应整理为 [`Timetable`]。
 pub(super) fn build_timetable(
     semester: Semester,
     entries: Vec<RawCourseTableEntry>,
+    unit_layouts: BTreeMap<String, Vec<CourseUnit>>,
 ) -> Result<Timetable> {
-    let mut regular_entries = Vec::new();
-    let mut experiment_entries = Vec::new();
-
-    for entry in entries {
-        if is_synthetic_experiment(&entry) {
-            experiment_entries.push(entry);
-        } else {
-            regular_entries.push(entry);
-        }
-    }
+    let referenced_layouts: BTreeSet<String> = entries
+        .iter()
+        .filter_map(|entry| entry.time_table_layout_assoc.map(|id| id.to_string()))
+        .collect();
+    let (experiment_entries, regular_entries): (Vec<_>, Vec<_>) =
+        entries.into_iter().partition(is_synthetic_experiment);
 
     let mut classes: Vec<TeachingClass> = Vec::with_capacity(regular_entries.len());
     let mut class_id_set: HashSet<i64> = HashSet::with_capacity(regular_entries.len());
@@ -1232,11 +1247,62 @@ pub(super) fn build_timetable(
     }
 
     merged_sessions.sort_by_key(ClassSession::sort_key);
+    let units = resolve_timetable_units(unit_layouts, &referenced_layouts, &merged_sessions)?;
     Ok(Timetable {
         semester,
+        units,
         classes,
         sessions: merged_sessions,
     })
+}
+
+/// 根据选课引用的作息布局 ID 与实际排课场次，选取最匹配的每日节次作息表。
+fn resolve_timetable_units(
+    layouts: BTreeMap<String, Vec<CourseUnit>>,
+    referenced_layouts: &BTreeSet<String>,
+    sessions: &[ClassSession],
+) -> Result<Vec<CourseUnit>> {
+    let max_session_unit = sessions
+        .iter()
+        .map(|session| session.end_unit)
+        .max()
+        .unwrap_or(0);
+    let mut normalized: BTreeMap<String, Vec<CourseUnit>> = BTreeMap::new();
+    for (key, units) in layouts {
+        normalized.insert(key, normalize_course_units(units)?);
+    }
+
+    // 优先从教学班显式引用的作息布局中选取节次覆盖最完整的一套（兼容跨院系混选）。
+    let matched = referenced_layouts
+        .iter()
+        .filter_map(|key| normalized.get(key))
+        .max_by_key(|units| (units.last().map_or(0, |unit| unit.index), units.len()))
+        .cloned();
+    if let Some(units) = matched {
+        return Ok(units);
+    }
+
+    // 无显式布局关联（如空课表或纯独立实验课）时，若默认 10 节布局足以覆盖排课节次则优先使用。
+    if let Some(default_units) = normalized.get("1") {
+        let default_max = default_units.last().map_or(0, |unit| unit.index);
+        if max_session_unit <= default_max {
+            return Ok(default_units.clone());
+        }
+    }
+
+    // 排课节次超出默认 10 节时，取能覆盖 max_session_unit 的最小布局，否则回退至最完整布局。
+    if let Some(covering) = normalized
+        .values()
+        .filter(|units| units.last().map_or(0, |unit| unit.index) >= max_session_unit)
+        .min_by_key(|units| (units.last().map_or(0, |unit| unit.index), units.len()))
+    {
+        return Ok(covering.clone());
+    }
+
+    Ok(normalized
+        .into_values()
+        .max_by_key(|units| (units.last().map_or(0, |unit| unit.index), units.len()))
+        .unwrap_or_default())
 }
 
 fn is_synthetic_experiment(entry: &RawCourseTableEntry) -> bool {
@@ -1563,6 +1629,7 @@ mod tests {
             "id": 500_002,
             "code": "888001-001",
             "bizTypeId": 2,
+            "timeTableLayoutAssoc": 2,
             "course": {
                 "id": 88001, "code": "888001", "nameZh": "晚间加节研讨", "nameEn": null,
                 "credits": 1, "periodInfo": {"total": 16}
@@ -1581,10 +1648,44 @@ mod tests {
         .unwrap()
     }
 
-    fn sample_raw_entries() -> Vec<RawCourseTableEntry> {
-        let mut entries: Vec<RawCourseTableEntry> = serde_json::from_value(json!([
+    fn sample_unit_layouts() -> BTreeMap<String, Vec<CourseUnit>> {
+        serde_json::from_value(json!({
+            "1": [
+                {"indexNo": 1, "nameZh": "1", "dayPart": "MORNING", "segmentIndex": 1, "startTime": 800, "endTime": 845},
+                {"indexNo": 2, "nameZh": "2", "dayPart": "MORNING", "segmentIndex": 1, "startTime": 855, "endTime": 940},
+                {"indexNo": 3, "nameZh": "3", "dayPart": "MORNING", "segmentIndex": 2, "startTime": 1010, "endTime": 1055},
+                {"indexNo": 4, "nameZh": "4", "dayPart": "MORNING", "segmentIndex": 2, "startTime": 1105, "endTime": 1150},
+                {"indexNo": 5, "nameZh": "5", "dayPart": "AFTERNOON", "segmentIndex": 3, "startTime": 1400, "endTime": 1445},
+                {"indexNo": 6, "nameZh": "6", "dayPart": "AFTERNOON", "segmentIndex": 3, "startTime": 1455, "endTime": 1540},
+                {"indexNo": 7, "nameZh": "7", "dayPart": "AFTERNOON", "segmentIndex": 4, "startTime": 1600, "endTime": 1645},
+                {"indexNo": 8, "nameZh": "8", "dayPart": "AFTERNOON", "segmentIndex": 4, "startTime": 1655, "endTime": 1740},
+                {"indexNo": 9, "nameZh": "9", "dayPart": "EVENING", "segmentIndex": 5, "startTime": 1900, "endTime": 1945},
+                {"indexNo": 10, "nameZh": "10", "dayPart": "EVENING", "segmentIndex": 5, "startTime": 1955, "endTime": 2040}
+            ],
+            "2": [
+                {"indexNo": 1, "nameZh": "第一节", "dayPart": "MORNING", "segmentIndex": 1, "startTime": 800, "endTime": 845},
+                {"indexNo": 2, "nameZh": "第二节", "dayPart": "MORNING", "segmentIndex": 1, "startTime": 855, "endTime": 940},
+                {"indexNo": 3, "nameZh": "第三节", "dayPart": "MORNING", "segmentIndex": 2, "startTime": 1010, "endTime": 1055},
+                {"indexNo": 4, "nameZh": "第四节", "dayPart": "MORNING", "segmentIndex": 2, "startTime": 1105, "endTime": 1150},
+                {"indexNo": 5, "nameZh": "第+1节", "dayPart": "NOON", "segmentIndex": 3, "startTime": 1200, "endTime": 1245},
+                {"indexNo": 6, "nameZh": "第+2节", "dayPart": "NOON", "segmentIndex": 3, "startTime": 1255, "endTime": 1340},
+                {"indexNo": 7, "nameZh": "第五节", "dayPart": "AFTERNOON", "segmentIndex": 4, "startTime": 1400, "endTime": 1445},
+                {"indexNo": 8, "nameZh": "第六节", "dayPart": "AFTERNOON", "segmentIndex": 4, "startTime": 1455, "endTime": 1540},
+                {"indexNo": 9, "nameZh": "第七节", "dayPart": "AFTERNOON", "segmentIndex": 5, "startTime": 1600, "endTime": 1645},
+                {"indexNo": 10, "nameZh": "第八节", "dayPart": "AFTERNOON", "segmentIndex": 5, "startTime": 1655, "endTime": 1740},
+                {"indexNo": 11, "nameZh": "第+3节", "dayPart": "AFTERNOON", "segmentIndex": 6, "startTime": 1750, "endTime": 1835},
+                {"indexNo": 12, "nameZh": "第九节", "dayPart": "EVENING", "segmentIndex": 7, "startTime": 1900, "endTime": 1945},
+                {"indexNo": 13, "nameZh": "第十节", "dayPart": "EVENING", "segmentIndex": 7, "startTime": 1955, "endTime": 2040},
+                {"indexNo": 14, "nameZh": "第+4节", "dayPart": "EVENING", "segmentIndex": 8, "startTime": 2050, "endTime": 2135}
+            ]
+        }))
+        .unwrap()
+    }
+
+    fn regular_only_raw_entries() -> Vec<RawCourseTableEntry> {
+        serde_json::from_value(json!([
             {
-                "id": 476_767, "code": "222302-013", "bizTypeId": 2,
+                "id": 476_767, "code": "222302-013", "bizTypeId": 2, "timeTableLayoutAssoc": 1,
                 "course": {
                     "id": 4171, "code": "222302", "nameZh": "大学物理B", "nameEn": "College Physics B",
                     "credits": 4,
@@ -1609,7 +1710,7 @@ mod tests {
                 }]
             },
             {
-                "id": 464_251, "code": "472022-002", "bizTypeId": 2,
+                "id": 464_251, "code": "472022-002", "bizTypeId": 2, "timeTableLayoutAssoc": 1,
                 "course": {
                     "id": 16848, "code": "472022", "nameZh": "生物化学 (I)", "nameEn": null,
                     "credits": 3, "periodInfo": {"total": 48, "weeks": 16, "periodsPerWeek": 3, "theory": 48}
@@ -1641,7 +1742,7 @@ mod tests {
                 ]
             },
             {
-                "id": 464_182, "code": "475047-002", "bizTypeId": 2,
+                "id": 464_182, "code": "475047-002", "bizTypeId": 2, "timeTableLayoutAssoc": 1,
                 "course": {
                     "id": 16856, "code": "475047", "nameZh": "LINUX操作系统上机实验", "nameEn": null,
                     "credits": 1, "periodInfo": {"total": 24, "weeks": 6, "periodsPerWeek": 4, "experiment": 24}
@@ -1649,7 +1750,7 @@ mod tests {
                 "teacherAssignmentList": ["杜江峰"], "scheduleState": "unpublish", "schedules": []
             },
             {
-                "id": 500_001, "code": "999001-001", "bizTypeId": 2,
+                "id": 500_001, "code": "999001-001", "bizTypeId": 2, "timeTableLayoutAssoc": 1,
                 "course": {
                     "id": 99001, "code": "999001", "nameZh": "创新实践", "nameEn": null,
                     "credits": 2, "periodInfo": {"total": 32, "practice": 32}
@@ -1657,7 +1758,11 @@ mod tests {
                 "scheduleState": "unpublish", "schedules": []
             }
         ]))
-        .unwrap();
+        .unwrap()
+    }
+
+    fn sample_raw_entries() -> Vec<RawCourseTableEntry> {
+        let mut entries = regular_only_raw_entries();
         entries.push(extended_unit_entry());
         entries
     }
@@ -1723,7 +1828,7 @@ mod tests {
     fn build_sample_timetable() -> Timetable {
         let mut entries = sample_raw_entries();
         entries.extend(sample_experiment_entries());
-        build_timetable(sample_semester(), entries).unwrap()
+        build_timetable(sample_semester(), entries, sample_unit_layouts()).unwrap()
     }
 
     #[test]
@@ -1782,6 +1887,9 @@ mod tests {
 
         let week20 = timetable.week(20).unwrap();
         assert_eq!(week20.max_unit(), 14);
+        assert_eq!(timetable.units.len(), 14);
+        assert_eq!(timetable.unit(5).unwrap().name_zh, "第+1节");
+        assert_eq!(timetable.unit(14).unwrap().end_time.to_string(), "21:35:00");
         assert_eq!(week20.sessions().len(), 1);
         assert_eq!(
             week20.sessions()[0].session().original_date,
@@ -1802,6 +1910,30 @@ mod tests {
         );
         let restored: Timetable = serde_json::from_value(encoded).unwrap();
         assert_eq!(restored, timetable);
+    }
+
+    #[test]
+    fn resolves_regular_and_fallback_unit_layouts() {
+        let regular = build_timetable(
+            sample_semester(),
+            regular_only_raw_entries(),
+            sample_unit_layouts(),
+        )
+        .unwrap();
+        assert_eq!(regular.units.len(), 10);
+        assert_eq!(regular.unit(10).unwrap().start_time.to_string(), "19:55:00");
+        assert_eq!(regular.unit(10).unwrap().end_time.to_string(), "20:40:00");
+
+        let empty = build_timetable(sample_semester(), Vec::new(), sample_unit_layouts()).unwrap();
+        assert_eq!(empty.units.len(), 10);
+
+        let orphan_only = build_timetable(
+            sample_semester(),
+            sample_experiment_entries(),
+            sample_unit_layouts(),
+        )
+        .unwrap();
+        assert_eq!(orphan_only.units.len(), 10);
     }
 
     #[test]
