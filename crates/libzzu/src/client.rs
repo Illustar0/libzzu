@@ -527,6 +527,18 @@ mod tests {
             call_cas(fixture.cas, c"verify_sms", b"[not json").0,
             ZZU_INVALID_INPUT
         );
+        assert_eq!(
+            call_cas(fixture.cas, c"devices", br#"{"page":0}"#).0,
+            ZZU_INVALID_INPUT
+        );
+        assert_eq!(
+            call_cas(fixture.cas, c"devices", br#"{"page_size":10}"#).0,
+            ZZU_INVALID_INPUT
+        );
+        assert_eq!(
+            call_cas(fixture.cas, c"devices", b"").0,
+            ZZU_AUTHENTICATION_ERROR
+        );
         // 拼错的字段名必须报错，而不是被静默忽略后退回默认学期。
         assert_eq!(
             call_async(zzu_eas_call, eas, c"timetable", br#"{"semester_id":1}"#).0,

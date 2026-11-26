@@ -42,6 +42,15 @@ struct SetDeviceTrust {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Devices {
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+}
+
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ServiceSso {
     service: Service,
@@ -85,6 +94,10 @@ impl ClientService for CasClient {
                 } = parse(params)?;
                 self.set_device_trust(&device_id, is_trusted).await?;
                 done()
+            }
+            "devices" => {
+                let Devices { page, page_size } = parse(params)?;
+                reply(&self.devices(page.unwrap_or(1), page_size).await?)
             }
             "user_info" => reply(&self.user_info().await?),
             "service_sso_url" => {

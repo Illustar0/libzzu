@@ -11,6 +11,10 @@ use tokio::sync::Mutex;
 
 use crate::{AuthenticationErrorKind, Error, Result, crypto, http};
 
+mod device;
+
+pub use device::{DEFAULT_DEVICE_PAGE_SIZE, DevicePage, LoginDevice};
+
 const CAS_URL: &str = "https://cas.s.zzu.edu.cn";
 const APP_AGENT: &str = "SWSuperApp/1.1.1()";
 const AUTHX_URL: &str = "https://authx-service.s.zzu.edu.cn";

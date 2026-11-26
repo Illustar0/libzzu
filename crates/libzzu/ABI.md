@@ -30,7 +30,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | 版本查询 | `zzu_abi_version`、`zzu_version` | 查询 C ABI 版本号与库软件版本号 |
 | 缓冲区 | `zzu_buffer_data`、`zzu_buffer_len`、`zzu_buffer_free` | 读取与释放本库分配的字节缓冲区 |
 | 运行时 | `zzu_runtime_new`、`zzu_runtime_free` | 创建与释放后台异步运行时（通常每进程一个） |
-| CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、个人信息与业务系统单点登录 |
+| CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、设备信任管理、个人信息与业务系统单点登录 |
 | 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、学期课表与教室占用查询 |
 | 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、在线校园码、账单流水、宿舍电费查询与充值、校园卡充值下单 |
 | 校园邮箱客户端 | `zzu_mail_new`、`zzu_mail_free`、`zzu_mail_call`、`zzu_mail_call_blocking` | 校园邮箱会话登录、网页版入口地址与收件箱未读邮件数查询 |
@@ -140,7 +140,7 @@ zzu_runtime_free(runtime);
     - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`payment_code`、`transactions`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话、默认房间与校园码刷新配置缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
-  - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`user_info` 与 `service_sso_url` 在读取令牌并释放会话锁后并发执行网络请求。
+  - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`devices`、`set_device_trust`、`user_info` 与 `service_sso_url` 在读取令牌并释放会话锁后并发执行网络请求。
   - **无状态全并发（`ZzuPortalClient`）**：无可变会话状态，所有调用完全并发执行。
 - **回调执行约束**：`ZzuCallback` 运行在名为 `zzu-worker` 的后台工作线程上，须尽快返回，以免阻塞运行时调度。回调必须使用 C 调用约定，**严禁**让 C++ 异常、托管异常或 Rust panic 越过 FFI 边界向外栈展开。回调内除不得调用 `*_blocking` 函数外，可自由调用 `zzu_buffer_*`、`zzu_*_free`、`zzu_*_call` 及本地纯函数。
 - **单次操作总时限（`timeoutMs`）**：客户端与 `zzu_portal_discover` 配置中的 `timeoutMs` 为单次操作端到端总时限（含等待客户端读写锁、会话锁或令牌换新锁的排队耗时及内部多次 HTTP 往返），默认值为 `15000` 毫秒，须为正整数（传 `0` 返回 `ZZU_INVALID_INPUT`）。超时后操作中止并返回 `ZZU_TIMEOUT`。库内不设其他隐式请求超时。
@@ -274,6 +274,7 @@ zzu_runtime_free(runtime);
 | `send_sms` | 无 | `{"securePhone": string \| null}` | 向绑定安全手机发送短信验证码并返回脱敏手机号。未探测或未初始化时会自动完成 `prepare_sms`；无需 MFA 或不支持短信时返回 `invalid_mfa_state`。发送失败时会保留当前 MFA 会话，避免作废已发验证码；若状态已过期，可调用 `detect_mfa` 重置 |
 | `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验，通过后须再次调用 `login`。未先调用 `send_sms` 时返回 `invalid_mfa_state`；验证码错误返回 `mfa_verification_failed`，并保留当前会话供直接重试；服务端返回非 2xx 或业务失败时自动清空 MFA 状态 |
 | `set_device_trust` | `deviceId: string`、`isTrusted: boolean` | `null` | 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）（需已登录，`deviceId` 不得为空）。`true` 表示信任，`false` 表示取消信任 |
+| `devices` | `page?: uint32`、`pageSize?: uint32` | `DevicePage` | 分页查询当前账号下的历史登录设备与信任状态列表（需已登录）。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `20`；`page == 0` 或 `pageSize == 0` 返回 `ZZU_INVALID_INPUT`。返回条目的 `deviceId` 可传给 `set_device_trust` 更新信任状态 |
 | `user_info` | 无 | `PersonalInfo` | 查询个人身份信息（需已登录） |
 | `service_sso_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或用户令牌，不得写入日志） |
 
@@ -294,6 +295,11 @@ zzu_runtime_free(runtime);
   "organizationId": "所属院系或部门编码 (string)"
 }
 ```
+
+`DevicePage` 与 `LoginDevice` 结构：
+
+- **`DevicePage`**：`{"items": LoginDevice[], "page": uint32, "pageSize": uint32, "totalItems": uint32, "totalPages": uint32}`。
+- **`LoginDevice`**：`{"id": string, "deviceId": string, "isTrusted": boolean, "deviceType": string | null, "os": string | null, "browser": string | null, "userAgent": string | null, "usedCount": uint32, "firstUsedTime": string, "lastUsedTime": string, "previousUsedTime": string | null}`。其中各时间字段均为 `Asia/Shanghai` 时区的 RFC 9557 字符串，`deviceId` 与创建客户端时的 `deviceId` 及 `set_device_trust` 的入参对应。
 
 ### `ZzuEasClient`（本科教务）
 
