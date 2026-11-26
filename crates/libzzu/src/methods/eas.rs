@@ -105,6 +105,7 @@ impl Service for Guarded<UndergradEasClient> {
                 reply(&self.read().await?.timetable(semester_id, options).await?)
             }
             "transcript" => reply(&self.read().await?.transcript().await?),
+            "exams" => reply(&self.read().await?.exams().await?),
             "classroom_catalog" => reply(&self.read().await?.classroom_catalog().await?),
             "classroom_occupancies_page" => {
                 let args: ClassroomOccupanciesPage = parse(params)?;

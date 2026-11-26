@@ -1,8 +1,9 @@
-//! 本科教务系统（EAMS）客户端与学期校历、课表、成绩单、教室占用数据结构。
+//! 本科教务系统（EAMS）客户端与学期校历、课表、成绩单、考试安排及教室占用数据结构。
 
 mod calendar;
 mod classroom;
 mod common;
+mod exam;
 mod semester;
 mod timetable;
 mod transcript;
@@ -14,6 +15,7 @@ pub use classroom::{
     RoomOccupation, RoomType,
 };
 pub use common::{CourseUnit, DayPart, NamedEntity};
+pub use exam::Exam;
 pub use semester::{Semester, SemesterSeason};
 pub use timetable::{
     ClassOrigin, ClassSession, Course, ExperimentProject, PeriodInfo, Room, ScheduleState,
@@ -33,6 +35,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{Error, Result, auth::CasClient, http};
 use classroom::{RawClassroomPage, RoomsRequest, merge_pages, validate_page, validate_page_size};
+use exam::normalize_exams;
 use timetable::{RawCourseTableEntry, build_timetable};
 use transcript::{RawCourseGrade, RawGpaRank, build_transcript};
 
@@ -226,6 +229,22 @@ impl UndergradEasClient {
         Ok(build_transcript(grades, gpa_rank))
     }
 
+    /// 查询当前学生尚未结束的考试安排列表。
+    ///
+    /// 教务移动端接口仅返回待考安排（已结束的历史考试不在返回范围内）。结果按考试时间升序排列，
+    /// 尚未排定具体时间的考试排在末尾。
+    ///
+    /// # Errors
+    ///
+    /// - 教务客户端尚未登录或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
+    /// - 网络传输、远端状态校验或考试时间解码失败时返回错误。
+    pub async fn exams(&self) -> Result<Vec<Exam>> {
+        let exams: Vec<Exam> = self
+            .fetch("/eams-micro-server/api/v1/exam/student/exam")
+            .await?;
+        Ok(normalize_exams(exams))
+    }
+
     /// 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型、楼层与标准节次作息）。
     ///
     /// 内部并发请求 5 个目录接口，返回扁平列表供前端渲染筛选项、绘制节次概览及按
@@ -373,6 +392,7 @@ mod tests {
         let query = ClassroomQuery::new(date);
 
         assert!(eas.transcript().await.unwrap_err().is_not_authenticated());
+        assert!(eas.exams().await.unwrap_err().is_not_authenticated());
         assert!(
             eas.classroom_catalog()
                 .await
