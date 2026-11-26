@@ -31,7 +31,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | 缓冲区 | `zzu_buffer_data`、`zzu_buffer_len`、`zzu_buffer_free` | 读取与释放本库分配的字节缓冲区 |
 | 运行时 | `zzu_runtime_new`、`zzu_runtime_free` | 创建与释放后台异步运行时（通常每进程一个） |
 | CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、设备信任管理、个人信息与头像查询以及业务系统单点登录 |
-| 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、学期课表、成绩单与绩点排名、考试安排及教室占用查询 |
+| 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、学期课表、成绩单与绩点排名、考试安排、培养方案完成度及教室占用查询 |
 | 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、在线校园码、账单流水、宿舍电费查询与充值、校园卡充值下单 |
 | 校园邮箱客户端 | `zzu_mail_new`、`zzu_mail_free`、`zzu_mail_call`、`zzu_mail_call_blocking` | 校园邮箱会话登录、网页版入口地址与收件箱未读邮件数查询 |
 | Portal 探测 | `zzu_portal_discover`、`zzu_portal_discover_blocking` | 自动探测当前网络下的校园网 Portal 地址与本机内网 IP |
@@ -136,7 +136,7 @@ zzu_runtime_free(runtime);
 
 - **线程安全与读写并发**：所有导出函数均支持多线程并发调用。各客户端按状态可变性采用不同的内部同步策略：
   - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuMailClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
-    - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`timetable`、`transcript`、`exams`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
+    - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`timetable`、`transcript`、`exams`、`program_completion`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
     - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`payment_code`、`transactions`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话、默认房间与校园码刷新配置缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
@@ -317,6 +317,7 @@ zzu_runtime_free(runtime);
 | `timetable` | `semesterId?: int64`、`includeExperiments?: boolean` | `Timetable` | 查询指定学期（省略时取当前学期）的完整课表，内含匹配的每日节次作息、全部教学班与排课场次；`includeExperiments` 默认 `true`；`semesterId` 不存在时返回 `ZZU_NOT_FOUND` |
 | `transcript` | 无 | `Transcript` | 并发查询当前学生的全部学期课程成绩与累计专业绩点排名，按最新学期在前排序；尚未完成网上评教的课程自动隐藏占位零分 |
 | `exams` | 无 | `Exam[]` | 查询当前学生尚未结束的待考安排列表（已结束的历史考试不在移动端接口返回范围内），按考试时间升序排列，时间待定项排在末尾 |
+| `program_completion` | 无 | `ProgramCompletion[]` | 查询当前学生在各培养类别（主修、辅修等）下的培养方案模块学分完成进度与计划外课程列表 |
 | `classroom_catalog` | 无 | `ClassroomCatalog` | 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型、楼层与标准节次作息），返回扁平列表供前端渲染筛选项、绘制节次概览及按 `buildingId` 反查教学楼信息 |
 | `classroom_occupancies_page` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`page?: uint32`、`pageSize?: uint32` | `ClassroomPage` | 按页查询符合筛选条件的教室及当日占用记录。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `44`；`page == 0`、`pageSize == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。**性能警告**：上游 API 存在极其严重的性能问题，响应耗时随 `pageSize` 增大而非线性增大（`100` 约 1 秒以上，`1000` 约 25 秒以上），`44` 左右通常是单条均摊耗时最低的甜点值；不清楚后端特性时请保持默认，高占用率校区可酌情调小以降低单页尾延迟 |
 | `classroom_occupancies` | `date: "YYYY-MM-DD"`、`campusId?: int64`、`buildingIds?: int64[]`、`roomTypeIds?: int64[]`、`floors?: int32[]`、`minSeats?: uint32`、`maxSeats?: uint32`、`pageSize?: uint32`、`concurrency?: uint64` | `ClassroomOccupancy[]` | 先以 `pageSize`（默认 `44`）拉取第 1 页获知总页数，再以 `concurrency`（默认 `8`）为并发上限并发拉取剩余分页，按页序合并并按教室 `id` 去重（任一页失败立即中止并返回错误）。`pageSize == 0`、`concurrency == 0` 或 `minSeats > maxSeats` 返回 `ZZU_INVALID_INPUT`。不带空间筛选的整校查询（约 1658 间教室）在高占用时段可能接近默认 `15000` 毫秒时限，建议配合校区/教学楼筛选、放宽 `timeoutMs`，或在需要进度条与单页容错时改用 `classroom_occupancies_page` |
@@ -350,6 +351,9 @@ zzu_runtime_free(runtime);
 | `SubGrade` | `kind: NamedEntity`、`score: string \| null`、`scoreEn: string \| null`、`isPublished: boolean`、`items: ProcessGrade[]` | 课程分项成绩（如平时成绩、实验成绩、期末成绩） |
 | `ProcessGrade` | `name: string`、`score: string \| null` | 分项成绩下的过程性考核细项 |
 | `Exam` | `id: int64 \| null`、`courseCode: string \| null`、`courseNameZh: string`、`courseNameEn: string \| null`、`classCode: string \| null`、`examType: NamedEntity \| null`、`cultivateType: NamedEntity \| null`、`date: "YYYY-MM-DD" \| null`、`weekday: uint8 \| null`（`1..=7`）、`startTime: string \| null`、`endTime: string \| null`、`place: string \| null`、`placeEn: string \| null`、`seatNumber: string \| null` | 单场待考安排记录；尚未排定时间或考场时 `date`、`startTime`、`endTime`、`place` 可为 `null`；排定时间后 `startTime` 与 `endTime` 成对为 `Asia/Shanghai` 时区 RFC 9557 字符串且 `startTime < endTime` |
+| `ProgramCompletion` | `cultivateType: NamedEntity`、`requiredCredits: float64`、`requiredModuleCount: uint32`、`modules: PlanModule[]`、`outOfPlanCourses: PlanCourse[]` | 单个培养类别（如主修、辅修）的培养方案整体完成进度 |
+| `PlanModule` | `kind: NamedEntity`、`requiredCredits: float64`、`requiredCourseCount: uint32`、`requiredSubModuleCount: uint32`、`passedCredits: float64`、`takingCredits: float64`、`exemptCredits: float64`、`status: string`、`remark: string \| null`、`children: PlanModule[]`、`courses: PlanCourse[]` | 培养方案模块学分统计与子模块递归树；`status` 已知取值为 `"passed"`、`"failed"`、`"in_progress"`、`"not_taken"`、`"exempt"`（须容忍未知字符串） |
+| `PlanCourse` | `courseId: int64`、`courseCode: string`、`courseNameZh: string`、`courseNameEn: string \| null`、`credits: float64 \| null`、`courseType: NamedEntity \| null`、`isCompulsory: boolean`、`suggestedTerms: uint8[]`、`status: string`、`score: string \| null`、`gradePoint: float64 \| null`、`remark: string \| null`、`substituteCourses: NamedEntity[]` | 培养方案内或计划外课程修读进度；`suggestedTerms` 为升序推荐修读学期序号（从 `1` 起），`status` 取值同 `PlanModule.status` |
 | `ClassroomCatalog` | `campuses: Campus[]`、`buildings: Building[]`、`roomTypes: RoomType[]`、`floors: int32[]`、`units: CourseUnit[]` | 教室占用筛选参照目录与标准节次作息快照；`units` 按 `index` 升序排列 |
 | `Campus` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`remark: string \| null`、`enabled: boolean` | 校区元数据 |
 | `Building` | `id: int64`、`code: string`、`nameZh: string`、`nameEn: string \| null`、`campusId: int64`、`remark: string \| null`、`enabled: boolean` | 教学楼元数据；`campusId` 映射自上游 `campusAssoc`（可能指向未出现在 `campuses` 中的默认校区 ID） |

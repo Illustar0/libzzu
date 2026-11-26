@@ -1,9 +1,10 @@
-//! 本科教务系统（EAMS）客户端与学期校历、课表、成绩单、考试安排及教室占用数据结构。
+//! 本科教务系统（EAMS）客户端与学期校历、课表、成绩单、考试安排、培养方案及教室占用数据结构。
 
 mod calendar;
 mod classroom;
 mod common;
 mod exam;
+mod plan;
 mod semester;
 mod timetable;
 mod transcript;
@@ -16,6 +17,7 @@ pub use classroom::{
 };
 pub use common::{CourseUnit, DayPart, NamedEntity};
 pub use exam::Exam;
+pub use plan::{CompletionStatus, PlanCourse, PlanModule, ProgramCompletion};
 pub use semester::{Semester, SemesterSeason};
 pub use timetable::{
     ClassOrigin, ClassSession, Course, ExperimentProject, PeriodInfo, Room, ScheduleState,
@@ -36,6 +38,7 @@ use serde::de::DeserializeOwned;
 use crate::{Error, Result, auth::CasClient, http};
 use classroom::{RawClassroomPage, RoomsRequest, merge_pages, validate_page, validate_page_size};
 use exam::normalize_exams;
+use plan::{RawCompletionInfo, build_program_completion};
 use timetable::{RawCourseTableEntry, build_timetable};
 use transcript::{RawCourseGrade, RawGpaRank, build_transcript};
 
@@ -245,6 +248,48 @@ impl UndergradEasClient {
         Ok(normalize_exams(exams))
     }
 
+    /// 查询当前学生在各培养类别（主修、辅修等）下的培养方案完成进度。
+    ///
+    /// 内部先查询学生关联的培养类别列表，再按类别编码并发拉取各方案的模块学分树与计划外课程记录，
+    /// 调用方无需手动传递上游必填的 `code` 参数。
+    ///
+    /// # Errors
+    ///
+    /// - 教务客户端尚未登录或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
+    /// - 培养类别或完成详情接口请求失败、业务状态非零、缺少类别编码或响应解码失败时返回错误。
+    pub async fn program_completion(&self) -> Result<Vec<ProgramCompletion>> {
+        self.current_semester()?;
+        let token = self.cas.user_token().await?;
+        let cultivate_types = self
+            .fetch_with_token::<Vec<NamedEntity>>(
+                &token,
+                "/eams-micro-server/api/v1/plan/search/completion/cultivateTypes",
+            )
+            .await?;
+        stream::iter(cultivate_types)
+            .map(|cultivate| {
+                let token = &token;
+                async move {
+                    let code = cultivate.code.trim();
+                    if code.is_empty() {
+                        return Err(Error::decode_message("培养类别缺少有效的 code 字段".into()));
+                    }
+                    let request = self
+                        .get_with_token(
+                            token,
+                            "/eams-micro-server/api/v1/plan/search/completion/info",
+                        )
+                        .query(&[("code", code)]);
+                    let response = http::json(request).await?;
+                    let info: RawCompletionInfo = http::data(response, "result")?;
+                    Ok(build_program_completion(cultivate, info))
+                }
+            })
+            .buffered(4)
+            .try_collect()
+            .await
+    }
+
     /// 并发查询教室占用筛选所需的全部参照目录（校区、教学楼、教室类型、楼层与标准节次作息）。
     ///
     /// 内部并发请求 5 个目录接口，返回扁平列表供前端渲染筛选项、绘制节次概览及按
@@ -393,6 +438,12 @@ mod tests {
 
         assert!(eas.transcript().await.unwrap_err().is_not_authenticated());
         assert!(eas.exams().await.unwrap_err().is_not_authenticated());
+        assert!(
+            eas.program_completion()
+                .await
+                .unwrap_err()
+                .is_not_authenticated()
+        );
         assert!(
             eas.classroom_catalog()
                 .await

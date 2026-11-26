@@ -490,7 +490,7 @@ mod tests {
         let ecard = fixture.ecard();
         let mail = fixture.mail();
         drop(fixture);
-        for method in [c"login", c"transcript", c"exams"] {
+        for method in [c"login", c"transcript", c"exams", c"program_completion"] {
             let (status, error) = call_async(zzu_eas_call, eas, method, b"");
             assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
             assert_eq!(error["kind"], "not_authenticated");

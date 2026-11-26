@@ -106,6 +106,7 @@ impl Service for Guarded<UndergradEasClient> {
             }
             "transcript" => reply(&self.read().await?.transcript().await?),
             "exams" => reply(&self.read().await?.exams().await?),
+            "program_completion" => reply(&self.read().await?.program_completion().await?),
             "classroom_catalog" => reply(&self.read().await?.classroom_catalog().await?),
             "classroom_occupancies_page" => {
                 let args: ClassroomOccupanciesPage = parse(params)?;
