@@ -3,10 +3,11 @@ use std::{
     net::IpAddr,
 };
 
+use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use zzu::ecard::{
     EcardClient, PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeConfig,
-    RechargeOrder, RoomId,
+    RechargeOrder, RoomId, TransactionKind, TransactionQuery,
 };
 
 use super::{Guarded, ZzuCasClient, done, parse, reply};
@@ -36,6 +37,19 @@ struct Location {
 #[serde(deny_unknown_fields)]
 struct OptionalRoom {
     room: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Transactions {
+    start_date: Date,
+    end_date: Date,
+    #[serde(default)]
+    kind: Option<TransactionKind>,
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -212,6 +226,27 @@ impl Service for Guarded<EcardClient> {
             "is_logged_in" => reply(&self.read().await?.is_logged_in()),
             "default_room" => reply(&self.read().await?.default_room().await?),
             "balance" => reply(&self.read().await?.balance().await?),
+            "transactions" => {
+                let Transactions {
+                    start_date,
+                    end_date,
+                    kind,
+                    page,
+                    page_size,
+                } = parse(params)?;
+                let query = TransactionQuery {
+                    start_date,
+                    end_date,
+                    kind,
+                };
+                reply(
+                    &self
+                        .read()
+                        .await?
+                        .transactions(&query, page.unwrap_or(1), page_size)
+                        .await?,
+                )
+            }
             "locations" => {
                 let Locations { parent } = parse(params)?;
                 let locations = self.read().await?.locations(&parent).await?;

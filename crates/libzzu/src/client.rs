@@ -519,6 +519,7 @@ mod tests {
     fn invalid_params_are_rejected_with_typed_statuses() {
         let fixture = Fixture::new();
         let eas = fixture.eas();
+        let ecard = fixture.ecard();
         assert_eq!(
             call_cas(fixture.cas, c"verify_sms", b"[not json").0,
             ZZU_INVALID_INPUT
@@ -528,8 +529,31 @@ mod tests {
             call_async(zzu_eas_call, eas, c"timetable", br#"{"semester_id":1}"#).0,
             ZZU_INVALID_INPUT
         );
-        // SAFETY: The handle came from its constructor and is released once.
-        unsafe { zzu_eas_free(eas) };
+        assert_eq!(
+            call_async(
+                zzu_ecard_call,
+                ecard,
+                c"transactions",
+                br#"{"startDate":"2026-11-10","endDate":"2026-11-01"}"#
+            )
+            .0,
+            ZZU_INVALID_INPUT
+        );
+        assert_eq!(
+            call_async(
+                zzu_ecard_call,
+                ecard,
+                c"transactions",
+                br#"{"startDate":"2026-11-01","endDate":"2026-11-10","unknown":1}"#
+            )
+            .0,
+            ZZU_INVALID_INPUT
+        );
+        // SAFETY: Both handles came from their constructors and are released once.
+        unsafe {
+            zzu_eas_free(eas);
+            zzu_ecard_free(ecard);
+        }
     }
 
     #[test]

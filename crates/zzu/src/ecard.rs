@@ -1,4 +1,4 @@
-//! 校园卡会话认证、余额查询、宿舍层级检索以及电费查询与充值。
+//! 校园卡会话认证、余额与账单流水查询、宿舍层级检索以及电费查询与充值。
 
 use std::{
     collections::BTreeMap,
@@ -16,9 +16,13 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::{Error, Result, auth::CasClient, crypto, http};
 
 mod recharge;
+mod transaction;
 
 pub use recharge::{
     PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeConfig, RechargeOrder,
+};
+pub use transaction::{
+    DEFAULT_TRANSACTION_PAGE_SIZE, Transaction, TransactionKind, TransactionQuery,
 };
 
 const ECARD_URL: &str = "https://ecard.v.zzu.edu.cn/server";
