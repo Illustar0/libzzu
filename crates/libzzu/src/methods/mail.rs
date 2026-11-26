@@ -1,8 +1,9 @@
 use std::ffi::{c_char, c_void};
 
+use serde::Deserialize;
 use zzu::mail::MailClient;
 
-use super::{Guarded, ZzuCasClient, done, reply};
+use super::{Guarded, ZzuCasClient, done, parse, reply};
 use crate::{
     buffer::ZzuBuffer,
     client::{Client, Service, ZzuCall, ZzuCallback, call, call_blocking},
@@ -13,8 +14,17 @@ use crate::{
 /// 校园邮箱客户端不透明句柄，线程安全，须通过 `zzu_mail_free` 释放。
 pub struct ZzuMailClient(Client<Guarded<MailClient>>);
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MessagesParams {
+    #[serde(default)]
+    page: Option<u32>,
+    #[serde(default)]
+    page_size: Option<u32>,
+}
+
 impl Service for Guarded<MailClient> {
-    async fn call(&self, method: &str, _params: &[u8]) -> FfiResult<Vec<u8>> {
+    async fn call(&self, method: &str, params: &[u8]) -> FfiResult<Vec<u8>> {
         match method {
             "login" => {
                 self.write().await?.login().await?;
@@ -27,6 +37,16 @@ impl Service for Guarded<MailClient> {
             "is_logged_in" => reply(&self.read().await?.is_logged_in()),
             "webmail_url" => reply(&self.read().await?.webmail_url().await?),
             "unread_count" => reply(&self.read().await?.unread_count().await?),
+            "messages" => {
+                let MessagesParams { page, page_size } = parse(params)?;
+                reply(
+                    &self
+                        .read()
+                        .await?
+                        .messages(page.unwrap_or(1), page_size)
+                        .await?,
+                )
+            }
             _ => Err(FfiError::UnknownMethod(method.into())),
         }
     }

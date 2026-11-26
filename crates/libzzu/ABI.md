@@ -33,7 +33,7 @@ ZzuRuntime ─┬─ zzu_cas_new ──────────┬─ zzu_eas_ne
 | CAS 客户端 | `zzu_cas_new`、`zzu_cas_free`、`zzu_cas_call`、`zzu_cas_call_blocking` | 统一身份认证、MFA 验证、令牌读写、设备信任管理、个人信息与头像查询以及业务系统单点登录 |
 | 教务客户端 | `zzu_eas_new`、`zzu_eas_free`、`zzu_eas_call`、`zzu_eas_call_blocking` | 本科教务登录、学期校历、学期课表、成绩单与绩点排名、考试安排、培养方案完成度及教室占用查询 |
 | 校园卡客户端 | `zzu_ecard_new`、`zzu_ecard_free`、`zzu_ecard_call`、`zzu_ecard_call_blocking` | 校园卡余额、在线校园码、账单流水、宿舍电费查询与充值、校园卡充值下单 |
-| 校园邮箱客户端 | `zzu_mail_new`、`zzu_mail_free`、`zzu_mail_call`、`zzu_mail_call_blocking` | 校园邮箱会话登录、网页版入口地址与收件箱未读邮件数查询 |
+| 校园邮箱客户端 | `zzu_mail_new`、`zzu_mail_free`、`zzu_mail_call`、`zzu_mail_call_blocking` | 校园邮箱会话登录、网页版入口地址、收件箱未读邮件数与邮件摘要查询 |
 | Portal 探测 | `zzu_portal_discover`、`zzu_portal_discover_blocking` | 自动探测当前网络下的校园网 Portal 地址与本机内网 IP |
 | Portal 客户端 | `zzu_portal_new`、`zzu_portal_free`、`zzu_portal_call`、`zzu_portal_call_blocking` | 校园网 `eportal` 终端上线认证与本机下线 |
 | 自助服务客户端 | `zzu_self_service_new`、`zzu_self_service_free`、`zzu_self_service_call`、`zzu_self_service_call_blocking` | 校园网在线终端列表查询与强制下线 |
@@ -138,7 +138,7 @@ zzu_runtime_free(runtime);
   - **公平异步读写锁（`ZzuEasClient`、`ZzuEcardClient`、`ZzuMailClient`、`ZzuSelfServiceClient`）**：内部使用 Tokio 写优先（FIFO 队列）异步读写锁保护客户端状态。读操作持共享读锁并发执行；写操作持独占写锁，等待已在途的读操作全部完成后执行，并在排队与执行期间阻塞后续新到达的读操作，既防止写饥饿，又保证登录、登出等会话状态切换的一致性。注意：异步任务由多线程工作池调度，调用提交顺序不等同于抢锁顺序，存在状态先后依赖的操作（如先 `login` 后查询）仍须等待前一步回调完成后再发起：
     - `ZzuEasClient`：`login`、`logout` 独占写锁；其余查询方法（`is_logged_in`、`current_semester`、`semesters`、`timetable`、`transcript`、`exams`、`program_completion`、`classroom_catalog`、`classroom_occupancies_page`、`classroom_occupancies`）共享读锁并发执行。
     - `ZzuEcardClient`：`login`、`logout`、`recharge_energy`、`create_recharge_order` 独占写锁；其余查询与收银台方法（`is_logged_in`、`default_room`、`balance`、`payment_code`、`transactions`、`locations`、`remaining_energy`、`recharge_config`、`payment_channels`、`prepare_payment`）共享读锁并发执行（内部仅在读写会话、默认房间与校园码刷新配置缓存时短暂持状态锁，释放锁后再发网络请求）。
-    - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
+    - `ZzuMailClient`：`login`、`logout` 独占写锁；`is_logged_in`、`webmail_url`、`unread_count`、`messages` 共享读锁并发执行（内部仅在读写会话缓存时短暂持状态锁，释放锁后再发网络请求）。
     - `ZzuSelfServiceClient`：`login`、`logout` 独占写锁；`is_logged_in`、`online_devices`、`kick_device` 共享读锁并发执行。
   - **会话互斥锁（`ZzuCasClient`）**：认证与 MFA 状态变更（及派生的教务、校园卡、邮箱客户端读取令牌）受同一异步会话互斥锁保护；`devices`、`set_device_trust`、`user_info`、`portrait` 与 `service_sso_url` 在读取令牌并释放会话锁后并发执行网络请求。
   - **无状态全并发（`ZzuPortalClient`）**：无可变会话状态，所有调用完全并发执行。
@@ -229,7 +229,7 @@ zzu_runtime_free(runtime);
 - **令牌持久化与恢复**：CAS 令牌仅在调用 `login`、`reauthenticate`、`set_tokens`、`logout` 时发生变更；应用可在这些调用完成后读取 `tokens` 并存入系统安全存储。进程重启恢复会话时，依次调用 `set_tokens` 与 `login`：只要预置令牌仍在可复用有效期内，`login` 会直接激活本地登录态，不发起任何网络请求。
 - **`token_expired` 判定规则**：已登录会话中，当 `userToken` 剩余有效期不足 15 分钟、`refreshToken` 已过期，或无法从 JWT 解析过期时间时，`user_token` 及所有依赖它的教务、校园卡、校园邮箱、个人信息与业务系统单点登录方法均返回 `ZZU_AUTHENTICATION_ERROR`（`kind: "token_expired"`）。该检查纯属本地时间校验；若服务端提前吊销了未过期的令牌，远端接口会返回认证或业务错误。重新调用 `login` 时仍可能触发 `mfa_required`，处理流程与首次登录一致。
 - **校园卡会话换新与并发合并**：校园卡客户端完成 `login` 后，在每次业务请求前短暂读取缓存校验内部 `access_token`，拿到可用令牌后立即释放状态锁再发起业务请求。若距上次换取已满 45 分钟（经验阈值）或底层 CAS `userToken` 已更新，内部通过独立的异步换新锁将并发换新合并为单次令牌交换（不消耗密码），多个等待中的请求直接复用同一次换新结果；若换新请求中途超时或被取消，换新锁自动释放，后续请求可继续正常触发换新。若此时底层 CAS 令牌本身已不可用，则不会换新，即使校园卡会话未满 45 分钟也直接返回 `token_expired`。
-- **校园邮箱会话换新与并发合并**：校园邮箱客户端完成 `login` 后，缓存网页版入口地址与 `sid`。每次调用 `webmail_url` 或 `unread_count` 前会校验底层 CAS `userToken` 与缓存新鲜度（20 分钟经验阈值）；若会话超期、底层 CAS `userToken` 已更新，或 `unread_count` 收到服务端会话失效响应（`FA_INVALID_SESSION`、`FA_INVALID_TEMP_SESSION` 或 `FA_SECURITY`），内部通过异步换新锁合并换新会话（不消耗密码）并自动重试一次查询。若底层 CAS 令牌已不可用，直接返回 `token_expired`。
+- **校园邮箱会话换新与并发合并**：校园邮箱客户端完成 `login` 后，缓存网页版入口地址与 `sid`。每次调用 `webmail_url`、`unread_count` 或 `messages` 前会校验底层 CAS `userToken` 与缓存新鲜度（20 分钟经验阈值）；若会话超期、底层 CAS `userToken` 已更新，或查询收到服务端会话失效响应（`FA_INVALID_SESSION`、`FA_INVALID_TEMP_SESSION` 或 `FA_SECURITY`），内部通过异步换新锁合并换新会话（不消耗密码）并自动重试一次查询。若底层 CAS 令牌已不可用，直接返回 `token_expired`。
 
 ---
 
@@ -406,6 +406,12 @@ zzu_runtime_free(runtime);
 | `is_logged_in` | 无 | `boolean` | 返回校园邮箱客户端是否已建立本地会话 |
 | `webmail_url` | 无 | `string` | 返回当前邮箱会话对应的网页版入口 URL（含 `sid` 会话凭据，**不得写入日志**）；会话超期或 CAS 令牌变更时自动换新 |
 | `unread_count` | 无 | `uint32` | 查询收件箱（文件夹 ID 为 `1`）中的未读邮件数（不计入虚拟视图、草稿箱、已发送、已删除、垃圾邮件与病毒文件夹） |
+| `messages` | `page?: uint32`、`pageSize?: uint32` | `MailMessagePage` | 分页查询收件箱（文件夹 ID 为 `1`）中的邮件摘要列表，按接收时间倒序排列。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `20`；`page == 0` 或 `pageSize == 0` 返回 `ZZU_INVALID_INPUT`。阅读完整正文或收发附件请跳转 `webmail_url` |
+
+校园邮箱数据结构：
+
+- **`MailMessagePage`**：`{"items": MailMessage[], "page": uint32, "pageSize": uint32, "totalItems": uint32, "totalPages": uint32}`。
+- **`MailMessage`**：`{"id": string, "from": string, "to": string, "subject": string, "summary": string | null, "sentTime": string | null, "receivedTime": string, "size": uint64, "isRead": boolean, "hasAttachment": boolean, "isFlagged": boolean}`。其中 `sentTime` 与 `receivedTime` 为 `Asia/Shanghai` 时区的 RFC 9557 时间字符串，`size` 为字节数。
 
 ### `ZzuPortalClient`（校园网 Portal 认证）
 

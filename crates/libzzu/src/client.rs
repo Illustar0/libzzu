@@ -506,11 +506,19 @@ mod tests {
             call_async(zzu_mail_call, mail, c"is_logged_in", b""),
             (ZZU_OK, json!(false))
         );
-        for method in [c"login", c"webmail_url", c"unread_count"] {
+        for method in [c"login", c"webmail_url", c"unread_count", c"messages"] {
             let (status, error) = call_async(zzu_mail_call, mail, method, b"");
             assert_eq!(status, ZZU_AUTHENTICATION_ERROR);
             assert_eq!(error["kind"], "not_authenticated");
         }
+        assert_eq!(
+            call_async(zzu_mail_call, mail, c"messages", br#"{"page":0}"#).0,
+            ZZU_INVALID_INPUT
+        );
+        assert_eq!(
+            call_async(zzu_mail_call, mail, c"messages", br#"{"page_size":10}"#).0,
+            ZZU_INVALID_INPUT
+        );
         let mut payload = ptr::null_mut();
         // SAFETY: The mail handle and method name are live; the output slot is writable.
         let status = unsafe {
