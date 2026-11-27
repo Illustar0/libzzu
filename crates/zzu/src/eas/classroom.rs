@@ -5,7 +5,9 @@ use jiff::{Zoned, civil::Date};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use super::common::{CourseUnit, deserialize_null_default, normalize_course_units, parse_time};
+use super::common::{
+    CourseUnit, deserialize_null_default, normalize_course_units, parse_time, trim_non_empty,
+};
 use crate::{Error, Result};
 
 /// 教室占用分页查询的默认每页条数。
@@ -29,11 +31,41 @@ pub struct Campus {
     /// 校区中文名称。
     pub name_zh: String,
     /// 校区英文名称。
+    #[serde(default)]
     pub name_en: Option<String>,
     /// 备注信息。
+    #[serde(default)]
     pub remark: Option<String>,
     /// 是否启用。
     pub enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RawCampus {
+    id: i64,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    code: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    name_zh: String,
+    #[serde(default)]
+    name_en: Option<String>,
+    #[serde(default)]
+    remark: Option<String>,
+    enabled: bool,
+}
+
+impl From<RawCampus> for Campus {
+    fn from(raw: RawCampus) -> Self {
+        Self {
+            id: raw.id,
+            code: raw.code,
+            name_zh: raw.name_zh,
+            name_en: trim_non_empty(raw.name_en),
+            remark: trim_non_empty(raw.remark),
+            enabled: raw.enabled,
+        }
+    }
 }
 
 /// 教学楼元数据。
@@ -47,16 +79,47 @@ pub struct Building {
     /// 教学楼中文名称。
     pub name_zh: String,
     /// 教学楼英文名称。
+    #[serde(default)]
     pub name_en: Option<String>,
-    /// 所属校区 ID（映射自上游 `campusAssoc`）。
+    /// 所属校区 ID。
     ///
     /// 注意：上游数据中可能存在指向未出现在校区列表中的默认校区 ID（如 `1`）的记录。
-    #[serde(alias = "campusAssoc")]
     pub campus_id: i64,
     /// 备注信息。
+    #[serde(default)]
     pub remark: Option<String>,
     /// 是否启用。
     pub enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RawBuilding {
+    id: i64,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    code: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    name_zh: String,
+    #[serde(default)]
+    name_en: Option<String>,
+    campus_assoc: i64,
+    #[serde(default)]
+    remark: Option<String>,
+    enabled: bool,
+}
+
+impl From<RawBuilding> for Building {
+    fn from(raw: RawBuilding) -> Self {
+        Self {
+            id: raw.id,
+            code: raw.code,
+            name_zh: raw.name_zh,
+            name_en: trim_non_empty(raw.name_en),
+            campus_id: raw.campus_assoc,
+            remark: trim_non_empty(raw.remark),
+            enabled: raw.enabled,
+        }
+    }
 }
 
 /// 教室类型元数据（如普通教室、多媒体教室、智慧教室）。
@@ -70,9 +133,35 @@ pub struct RoomType {
     /// 教室类型中文名称。
     pub name_zh: String,
     /// 教室类型英文名称。
+    #[serde(default)]
     pub name_en: Option<String>,
     /// 是否启用。
     pub enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RawRoomType {
+    id: i64,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    code: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    name_zh: String,
+    #[serde(default)]
+    name_en: Option<String>,
+    enabled: bool,
+}
+
+impl From<RawRoomType> for RoomType {
+    fn from(raw: RawRoomType) -> Self {
+        Self {
+            id: raw.id,
+            code: raw.code,
+            name_zh: raw.name_zh,
+            name_en: trim_non_empty(raw.name_en),
+            enabled: raw.enabled,
+        }
+    }
 }
 
 /// 教室占用查询所需的筛选目录与标准节次作息快照。
@@ -387,18 +476,50 @@ pub struct ClassroomOccupancy {
     /// 教室中文名称。
     pub name_zh: String,
     /// 教室英文名称。
+    #[serde(default)]
     pub name_en: Option<String>,
     /// 所属教学楼 ID（可通过 [`ClassroomCatalog::buildings`] 查找教学楼名称）。
     pub building_id: i64,
     /// 所属校区中文名称。
     pub campus_name_zh: String,
     /// 查询当日的占用记录列表（无占用时为空列表）。
+    #[serde(default)]
+    pub occupations: Vec<RoomOccupation>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawClassroomOccupancy {
+    id: i64,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    code: String,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    name_zh: String,
+    #[serde(default)]
+    name_en: Option<String>,
+    building_id: i64,
+    #[serde(default, deserialize_with = "deserialize_null_default")]
+    campus_name_zh: String,
     #[serde(
-        alias = "roomOccupationInfoVms",
+        rename = "roomOccupationInfoVms",
         default,
         deserialize_with = "deserialize_null_default"
     )]
-    pub occupations: Vec<RoomOccupation>,
+    occupations: Vec<RoomOccupation>,
+}
+
+impl From<RawClassroomOccupancy> for ClassroomOccupancy {
+    fn from(raw: RawClassroomOccupancy) -> Self {
+        Self {
+            id: raw.id,
+            code: raw.code,
+            name_zh: raw.name_zh,
+            name_en: trim_non_empty(raw.name_en),
+            building_id: raw.building_id,
+            campus_name_zh: raw.campus_name_zh,
+            occupations: raw.occupations,
+        }
+    }
 }
 
 impl ClassroomOccupancy {
@@ -435,7 +556,7 @@ impl ClassroomOccupancy {
 }
 
 /// 教室占用单页查询结果。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClassroomPage {
     /// 当前页返回的教室占用列表。
@@ -462,7 +583,7 @@ impl ClassroomPage {
 #[serde(rename_all = "camelCase")]
 pub(super) struct RawClassroomPage {
     #[serde(default, deserialize_with = "deserialize_null_default")]
-    data: Vec<ClassroomOccupancy>,
+    data: Vec<RawClassroomOccupancy>,
     #[serde(rename = "_page_")]
     page: RawPageInfo,
 }
@@ -479,7 +600,7 @@ struct RawPageInfo {
 impl From<RawClassroomPage> for ClassroomPage {
     fn from(raw: RawClassroomPage) -> Self {
         Self {
-            items: raw.data,
+            items: raw.data.into_iter().map(ClassroomOccupancy::from).collect(),
             page: raw.page.current_page,
             page_size: raw.page.rows_per_page,
             total_items: raw.page.total_rows,
@@ -548,19 +669,22 @@ mod tests {
     }
 
     #[test]
-    fn building_aliases_campus_assoc_and_roundtrips_camel_case() {
+    fn building_maps_campus_assoc_and_roundtrips_camel_case() {
         let raw = json!({
             "id": 5,
             "code": "北1",
             "nameZh": "北1",
-            "nameEn": null,
+            "nameEn": "  ",
             "campusAssoc": 2,
             "remark": null,
             "enabled": true,
             "transient": false
         });
-        let building: Building = serde_json::from_value(raw).unwrap();
+        let raw_building: RawBuilding = serde_json::from_value(raw.clone()).unwrap();
+        let building = Building::from(raw_building);
         assert_eq!(building.campus_id, 2);
+        assert_eq!(building.name_en, None);
+        assert!(serde_json::from_value::<Building>(raw).is_err());
 
         let serialized = serde_json::to_value(&building).unwrap();
         assert_eq!(serialized["campusId"], 2);
@@ -580,7 +704,7 @@ mod tests {
             }],
             "buildings": [{
                 "id": 5, "code": "北1", "nameZh": "北1", "nameEn": null,
-                "campusAssoc": 2, "remark": null, "enabled": true
+                "campusId": 2, "remark": null, "enabled": true
             }],
             "roomTypes": [{
                 "id": 2, "code": "02", "nameZh": "多媒体教室", "nameEn": null,
@@ -615,7 +739,7 @@ mod tests {
         let raw = json!({
             "id": 1999,
             "nameZh": "建材实验室",
-            "nameEn": null,
+            "nameEn": " ",
             "code": "011401",
             "buildingId": 368,
             "campusNameZh": "主校区",
@@ -626,8 +750,10 @@ mod tests {
             "experiment": false,
             "roomOccupationInfoVms": null
         });
-        let room: ClassroomOccupancy = serde_json::from_value(raw).unwrap();
+        let raw_room: RawClassroomOccupancy = serde_json::from_value(raw).unwrap();
+        let room = ClassroomOccupancy::from(raw_room);
         assert_eq!(room.occupations, []);
+        assert_eq!(room.name_en, None);
 
         let serialized = serde_json::to_value(&room).unwrap();
         assert!(serialized.get("seatsForLesson").is_none());
@@ -712,7 +838,8 @@ mod tests {
                 }
             ]
         });
-        serde_json::from_value(raw).unwrap()
+        let raw_room: RawClassroomOccupancy = serde_json::from_value(raw).unwrap();
+        raw_room.into()
     }
 
     #[test]
@@ -876,6 +1003,10 @@ mod tests {
         assert_eq!(page.page_size, 44);
         assert_eq!(page.total_items, 100);
         assert_eq!(page.total_pages, 3);
+        assert_eq!(
+            serde_json::from_value::<ClassroomPage>(serde_json::to_value(&page).unwrap()).unwrap(),
+            page
+        );
     }
 
     fn room(id: i64, name_zh: &str) -> ClassroomOccupancy {

@@ -14,7 +14,7 @@ use super::{
 
 /// 课程修读性质（如必修、选修）。
 ///
-/// 序列化为统一的 `snake_case` 字符串；反序列化时同时兼容本库字符串格式、中英文文本与教务上游的 `{text, textZh, textEn}` 对象。
+/// 序列化为统一的 `snake_case` 字符串，反序列化时兼容中英文文本标识。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StudyType {
     /// 必修（上游 `"必修"` / `"Required"`，序列化为 `"required"`）。
@@ -64,6 +64,15 @@ impl Serialize for StudyType {
 
 impl<'de> Deserialize<'de> for StudyType {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from(value))
+    }
+}
+
+struct RawStudyType(StudyType);
+
+impl<'de> Deserialize<'de> for RawStudyType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
         struct LocalizedText {
@@ -76,7 +85,7 @@ impl<'de> Deserialize<'de> for StudyType {
         }
 
         match serde_json::Value::deserialize(deserializer)? {
-            serde_json::Value::String(text) => Ok(Self::from(text)),
+            serde_json::Value::String(text) => Ok(Self(StudyType::from(text))),
             value @ serde_json::Value::Object(_) => {
                 let localized: LocalizedText =
                     serde_json::from_value(value).map_err(serde::de::Error::custom)?;
@@ -84,7 +93,7 @@ impl<'de> Deserialize<'de> for StudyType {
                     .or_else(|| trim_non_empty(localized.text))
                     .or_else(|| trim_non_empty(localized.text_en))
                     .ok_or_else(|| serde::de::Error::custom("studyType 缺少有效文本"))?;
-                Ok(Self::from(chosen))
+                Ok(Self(StudyType::from(chosen)))
             }
             _ => Err(serde::de::Error::custom("studyType 必须为字符串或对象")),
         }
@@ -469,7 +478,7 @@ pub(super) struct RawCourseGrade {
     #[serde(default)]
     cultivate_type: Option<NamedEntity>,
     #[serde(default)]
-    study_type: Option<StudyType>,
+    study_type: Option<RawStudyType>,
     #[serde(default)]
     credits: Option<f64>,
     #[serde(default)]
@@ -589,7 +598,7 @@ fn into_course_grade(raw: RawCourseGrade) -> CourseGrade {
         course_type,
         course_property,
         cultivate_type: raw.cultivate_type,
-        study_type: raw.study_type,
+        study_type: raw.study_type.map(|item| item.0),
         credits: if is_locked {
             None
         } else {
@@ -789,6 +798,7 @@ mod tests {
         let encoded = serde_json::to_value(&transcript).unwrap();
         let restored: Transcript = serde_json::from_value(encoded).unwrap();
         assert_eq!(restored, transcript);
+        assert!(serde_json::from_value::<StudyType>(json!({"textZh": "必修"})).is_err());
     }
 
     #[test]

@@ -36,7 +36,10 @@ use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 
 use crate::{Error, RequestContext, Result, auth::CasClient, http};
-use classroom::{RawClassroomPage, RoomsRequest, merge_pages, validate_page, validate_page_size};
+use classroom::{
+    RawBuilding, RawCampus, RawClassroomPage, RawRoomType, RoomsRequest, merge_pages,
+    validate_page, validate_page_size,
+};
 use exam::normalize_exams;
 use plan::{RawCompletionInfo, build_program_completion};
 use timetable::{RawCourseTableEntry, build_timetable, normalize_unit_layouts};
@@ -323,15 +326,15 @@ impl UndergradEasClient {
         self.current_semester()?;
         let token = self.cas.user_token().await?;
         let (campuses, buildings, room_types, floors, (units, units_context)) = try_join5(
-            self.fetch_with_token::<Vec<Campus>>(
+            self.fetch_with_token::<Vec<RawCampus>>(
                 &token,
                 "/eams-micro-server/api/v1/room/place/campus",
             ),
-            self.fetch_with_token::<Vec<Building>>(
+            self.fetch_with_token::<Vec<RawBuilding>>(
                 &token,
                 "/eams-micro-server/api/v1/room/place/building?campusAssoc=",
             ),
-            self.fetch_with_token::<Vec<RoomType>>(
+            self.fetch_with_token::<Vec<RawRoomType>>(
                 &token,
                 "/eams-micro-server/api/v1/room/place/roomTypes",
             ),
@@ -345,8 +348,14 @@ impl UndergradEasClient {
             ),
         )
         .await?;
-        ClassroomCatalog::new(campuses, buildings, room_types, floors, units)
-            .map_err(|error| error.with_request(units_context))
+        ClassroomCatalog::new(
+            campuses.into_iter().map(Campus::from).collect(),
+            buildings.into_iter().map(Building::from).collect(),
+            room_types.into_iter().map(RoomType::from).collect(),
+            floors,
+            units,
+        )
+        .map_err(|error| error.with_request(units_context))
     }
 
     async fn fetch_classroom_page(
