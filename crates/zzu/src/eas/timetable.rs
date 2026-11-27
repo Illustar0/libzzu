@@ -18,6 +18,7 @@ use super::{
 
 /// 拉取学期课表时的请求选项。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TimetableOptions {
     /// 是否包含实验系统排课（默认 `true`）。
@@ -34,6 +35,7 @@ impl Default for TimetableOptions {
 
 /// 课程学时与周次统计信息。
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PeriodInfo {
     /// 课程总学时。
@@ -66,6 +68,7 @@ pub struct PeriodInfo {
 
 /// 课程目录级基础元数据。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Course {
     /// 课程数字 ID。
@@ -86,6 +89,7 @@ pub struct Course {
 
 /// 教学班任课教师姓名。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TeacherName {
     /// 教师中文姓名。
@@ -97,6 +101,7 @@ pub struct TeacherName {
 
 /// 教学班数据来源。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ClassOrigin {
     /// 教务常规选课教学班。
@@ -107,12 +112,18 @@ pub enum ClassOrigin {
 
 /// 教学班排课发布状态。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum ScheduleState {
     /// 已发布（上游 `"published"`）。
     Published,
     /// 未发布（上游 `"unpublish"` / `"unpublished"`）。
     Unpublished,
     /// 上游返回的其他状态文本。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -159,6 +170,7 @@ impl<'de> Deserialize<'de> for ScheduleState {
 
 /// 学期内选修的一个教学班（包含未排课课程与实验课程父班）。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TeachingClass {
     /// 教学班数字 ID（在 [`Timetable::classes`] 中唯一）。
@@ -202,6 +214,11 @@ pub struct TeachingClass {
 
 /// 单次排课的授课类型。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum SessionKind {
     /// 理论课（上游 `"THEORY"`）。
     Theory,
@@ -214,6 +231,7 @@ pub enum SessionKind {
     /// 设计课（上游 `"DESIGN"`）。
     Design,
     /// 上游返回的其他授课类型文本。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -279,12 +297,18 @@ impl<'de> Deserialize<'de> for SessionKind {
 
 /// 单次排课的执行状态。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum SessionState {
     /// 未完成（上游 `"未完成"` / `"pending"`）。
     Pending,
     /// 已完成或已结束（上游 `"已完成"` / `"已结束"` / `"completed"`）。
     Completed,
     /// 上游返回的其他状态文本。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -331,6 +355,7 @@ impl<'de> Deserialize<'de> for SessionState {
 
 /// 单次排课场次的授课教师信息。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTeacher {
     /// 教务教师 ID（上游未提供时为 `None`）。
@@ -348,6 +373,7 @@ pub struct SessionTeacher {
 
 /// 实验排课关联的具体实验项目信息。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentProject {
     /// 实验项目 ID。
@@ -363,6 +389,7 @@ pub struct ExperimentProject {
 
 /// 上课教室及其所属教学楼与校区信息。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Room {
     /// 教室数字 ID。
@@ -386,6 +413,11 @@ pub struct Room {
 /// 同教学班在同一时间、同一地点由多位教师合上的上游重复记录会无损合并为单条场次，
 /// 所有教师按顺序保留在 [`Self::teachers`] 中。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawClassSession")]
 pub struct ClassSession {
     /// 所属教学班 ID（指向 [`Timetable::classes`] 中的某一项）。
@@ -395,15 +427,19 @@ pub struct ClassSession {
     /// 所属教学周序号（从 1 开始）。
     pub week_index: u32,
     /// 上课公历日期。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub date: Date,
     /// 调课前的原始上课日期（未发生调课时为 `None`）。
     #[serde(default)]
+    #[cfg_attr(feature = "schemars", schemars(with = "Option<crate::schema::Date>"))]
     pub original_date: Option<Date>,
     /// 星期序号（`1` 表示周一，`7` 表示周日）。
     pub weekday: u8,
     /// 有效开始时间（`Asia/Shanghai` 时区；上游提供非零实际时间时优先取实际时间）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::ZonedDateTime"))]
     pub start_time: ZonedDateTime,
     /// 有效结束时间（`Asia/Shanghai` 时区，严格晚于 `start_time`）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::ZonedDateTime"))]
     pub end_time: ZonedDateTime,
     /// 起始节次（从 1 开始，不限 10 节）。
     pub start_unit: u8,
@@ -548,6 +584,11 @@ impl TryFrom<RawClassSession> for ClassSession {
 /// 每条 [`ClassSession::class_id`] 均对应 [`Self::classes`] 中的教学班。
 /// 按周查询、冲突检测与日历导出均在本地完成，不发起网络请求。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawTimetable")]
 pub struct Timetable {
     /// 课表所属学期校历。

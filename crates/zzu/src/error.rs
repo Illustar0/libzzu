@@ -10,6 +10,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// 为避免泄露敏感凭据，`url` 已预先剥离查询参数、片段与用户信息；
 /// [`fmt::Debug`] 实现仅输出响应体字节长度，不打印完整正文。
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct RequestContext {
     /// HTTP 请求方法（如 `"GET"`、`"POST"`）。
@@ -45,6 +46,7 @@ impl fmt::Debug for RequestContext {
 
 /// 网络传输层错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TransportErrorKind {
@@ -58,6 +60,7 @@ pub enum TransportErrorKind {
 
 /// 非 2xx HTTP 状态错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum HttpErrorKind {
@@ -67,6 +70,7 @@ pub enum HttpErrorKind {
 
 /// 响应或协议数据解码错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DecodeErrorKind {
@@ -76,6 +80,7 @@ pub enum DecodeErrorKind {
 
 /// 调用方输入参数校验错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum InvalidInputErrorKind {
@@ -85,6 +90,7 @@ pub enum InvalidInputErrorKind {
 
 /// 身份认证与多因素认证（MFA）错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AuthenticationErrorKind {
@@ -106,6 +112,7 @@ pub enum AuthenticationErrorKind {
 
 /// 远端服务业务错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RemoteErrorKind {
@@ -115,6 +122,7 @@ pub enum RemoteErrorKind {
 
 /// 资源不存在错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum NotFoundErrorKind {
@@ -124,6 +132,7 @@ pub enum NotFoundErrorKind {
 
 /// 密钥解析或加解密错误的细分类型。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CryptoErrorKind {
@@ -528,6 +537,69 @@ impl Serialize for Error {
         state.serialize_field("message", &self.to_string())?;
         state.serialize_field("context", &self.request())?;
         state.end()
+    }
+}
+
+#[cfg(feature = "schemars")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schemars")))]
+impl schemars::JsonSchema for Error {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Error".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::Error").into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        /// 校园服务客户端统一错误类型。
+        #[derive(schemars::JsonSchema)]
+        #[serde(tag = "code", rename_all = "snake_case")]
+        #[expect(dead_code)]
+        enum ErrorWire {
+            Transport {
+                kind: TransportErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+            Http {
+                kind: HttpErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+            Decode {
+                kind: DecodeErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+            InvalidInput {
+                kind: InvalidInputErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+            Authentication {
+                kind: AuthenticationErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+            Remote {
+                kind: RemoteErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+            NotFound {
+                kind: NotFoundErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+            Crypto {
+                kind: CryptoErrorKind,
+                message: String,
+                context: Option<RequestContext>,
+            },
+        }
+
+        ErrorWire::json_schema(generator)
     }
 }
 

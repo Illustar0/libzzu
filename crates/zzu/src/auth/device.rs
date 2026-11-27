@@ -13,6 +13,7 @@ pub const DEFAULT_DEVICE_PAGE_SIZE: u32 = 20;
 
 /// 历史登录设备的单页查询结果。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct DevicePage {
     /// 当前页的历史登录设备列表。
@@ -29,6 +30,7 @@ pub struct DevicePage {
 
 /// 账号下曾登录过的单条终端设备或网页会话及信任状态记录。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct LoginDevice {
     /// 个人安全中心设备记录唯一标识。
@@ -54,12 +56,24 @@ pub struct LoginDevice {
     pub used_count: u32,
     /// 首次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
     #[serde(default)]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "Option<crate::schema::ZonedDateTime>")
+    )]
     pub first_used_time: Option<ZonedDateTime>,
     /// 最近一次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
     #[serde(default)]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "Option<crate::schema::ZonedDateTime>")
+    )]
     pub last_used_time: Option<ZonedDateTime>,
     /// 上一次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
     #[serde(default)]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "Option<crate::schema::ZonedDateTime>")
+    )]
     pub previous_used_time: Option<ZonedDateTime>,
 }
 

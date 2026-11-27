@@ -13,6 +13,7 @@ const DEFAULT_QR_REFRESH_SECONDS: u32 = 60;
 ///
 /// `code` 为实时有效的支付与门禁凭据，切勿写入日志（[`fmt::Debug`] 实现已隐藏该字段）。
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentCode {
     /// 用于编码生成二维码图像的动态码原始字符串（含支付凭据，严禁写入日志）。

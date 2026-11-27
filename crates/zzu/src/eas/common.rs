@@ -11,6 +11,7 @@ use crate::{Error, Result};
 
 /// 带中英文名称与编码的通用教务命名实体（如校区、教学楼、课程性质、开课院系）。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct NamedEntity {
     /// 实体数字 ID。
@@ -31,6 +32,11 @@ pub struct NamedEntity {
 /// 序列化为统一的 `snake_case` 字符串，同时兼容反序列化教务上游的全大写标识；
 /// 遇到未知时段标识时原样保留在 [`Self::Other`] 中。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum DayPart {
     /// 上午（上游 `"MORNING"`，序列化为 `"morning"`）。
     Morning,
@@ -41,6 +47,7 @@ pub enum DayPart {
     /// 晚上（上游 `"EVENING"`，序列化为 `"evening"`）。
     Evening,
     /// 上游返回的其他未知时段标识。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -94,6 +101,11 @@ impl<'de> Deserialize<'de> for DayPart {
 /// 表示每日作息表中的一个节次刻度（不绑定具体公历日期），既用于渲染课表纵轴，
 /// 也用于将教室物理占用区间投影到标准节次网格。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawCourseUnit")]
 pub struct CourseUnit {
     /// 节次序号（从 1 开始，对应 [`super::ClassSession::start_unit`] 与 [`super::ClassSession::end_unit`]）。
@@ -108,8 +120,10 @@ pub struct CourseUnit {
     /// 连排大节分组序号（从 1 开始；同一大节内的相邻小节共享相同序号）。
     pub segment_index: u8,
     /// 本节上课时刻（墙上时钟，序列化为 ISO 8601 `HH:MM:SS` 字符串，如 `"08:00:00"`）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Time"))]
     pub start_time: Time,
     /// 本节下课时刻（严格晚于 `start_time`）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Time"))]
     pub end_time: Time,
 }
 

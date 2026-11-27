@@ -16,12 +16,18 @@ use super::{
 ///
 /// 序列化为统一的 `snake_case` 字符串，反序列化时兼容中英文文本标识。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum StudyType {
     /// 必修（上游 `"必修"` / `"Required"`，序列化为 `"required"`）。
     Required,
     /// 选修（上游 `"选修"` / `"Elective"`，序列化为 `"elective"`）。
     Elective,
     /// 上游返回的其他未知修读性质文本。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -102,6 +108,11 @@ impl<'de> Deserialize<'de> for RawStudyType {
 
 /// 课程成绩记录的展示与考核状态。
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum GradeState {
     /// 常规状态（无评教锁定或待缓考标记，序列化为 `"normal"`）。
     #[default]
@@ -111,6 +122,7 @@ pub enum GradeState {
     /// 已办理缓考且尚未参加考试（上游 `state == "WAIT_FOR_DELAY"`，序列化为 `"deferred_pending"`）。
     DeferredPending,
     /// 上游返回的其他未知状态标识。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -162,6 +174,11 @@ impl<'de> Deserialize<'de> for GradeState {
 /// 教务成绩接口内嵌的学期对象不含教学周数组 `weekIndices`，因此独立于 [`super::Semester`] 建模；
 /// 可通过 [`Self::id`] 与 [`super::Semester::id`] 关联。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawGradeSemester")]
 pub struct GradeSemester {
     /// 学期数字 ID。
@@ -178,8 +195,10 @@ pub struct GradeSemester {
     /// 学期季节。
     pub season: SemesterSeason,
     /// 学期起始公历日期（含）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub start_date: Date,
     /// 学期结束公历日期（含）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub end_date: Date,
 }
 
@@ -221,6 +240,7 @@ impl TryFrom<RawGradeSemester> for GradeSemester {
 
 /// 过程性考核细项成绩（如考勤、课堂测验、实验报告）。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessGrade {
     /// 细项名称。
@@ -232,6 +252,7 @@ pub struct ProcessGrade {
 
 /// 课程分项成绩（如平时成绩、实验成绩、期末成绩）。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct SubGrade {
     /// 分项成绩类别（如 `"平时成绩"`、`"期末成绩"`、`"实验成绩"`）。
@@ -253,6 +274,11 @@ pub struct SubGrade {
 ///
 /// 满足不变量 `1 <= rank <= total`。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawRankPair")]
 pub struct GpaRank {
     /// 当前学生在专业年级中的排名（从 1 开始，不超过 `total`）。
@@ -290,6 +316,7 @@ impl TryFrom<RawRankPair> for GpaRank {
 /// [`GradeState::EvaluationRequired`]（未评教锁定）时，成绩、绩点、通过状态与分项明细均置为空，
 /// 避免将上游占位零值误判为挂科。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct CourseGrade {
     /// 修读所属学期。
@@ -357,6 +384,7 @@ pub struct CourseGrade {
 
 /// 学生完整成绩单与累计绩点排名快照。
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Transcript {
     /// 累计平均学分绩点（尚未产生有效绩点时为 `None`）。

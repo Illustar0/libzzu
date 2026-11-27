@@ -6,6 +6,7 @@ use crate::{Decimal, Error, Result, http};
 
 /// 宿舍电控账户详情快照。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct EnergyAccount {
     /// 本次查询对应的宿舍房间号（入参省略时为当前账号绑定的默认房间）。

@@ -37,6 +37,7 @@ const LEAVE_URL: &str = "https://jf.v.zzu.edu.cn/jksb/servlet/qjxtcas?returnUrl=
 
 /// 可通过统一身份认证获取单点登录跳转地址的业务系统。
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum Service {
@@ -58,6 +59,7 @@ pub enum Service {
 
 /// 本科教务系统（EAMS）支持携带令牌直接跳转的前端子应用。
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum UndergradEasService {
@@ -110,6 +112,7 @@ impl UndergradEasService {
 ///
 /// 序列化结果包含会话凭据，切勿写入日志（[`fmt::Debug`] 实现已隐藏令牌明文）。
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Tokens {
     /// 访问各业务系统的用户 JWT（有效期约 1 个月）。
@@ -166,6 +169,7 @@ impl Tokens {
 
 /// 当前会话的多因素认证（MFA）检测与校验状态。
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct MfaStatus {
     /// 当前设备与账号登录是否需要多因素认证。
@@ -178,6 +182,7 @@ pub struct MfaStatus {
 
 /// 短信多因素认证的发送上下文。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct SmsChallenge {
     /// 服务端返回的脱敏安全手机号；服务端未提供时为 `None`。
@@ -973,6 +978,7 @@ fn parse_user_info(response: http::JsonResponse) -> Result<PersonalInfo> {
 
 /// 统一身份认证服务返回的个人基础身份信息。
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PersonalInfo {
     /// 学号或工号（用户唯一标识）。

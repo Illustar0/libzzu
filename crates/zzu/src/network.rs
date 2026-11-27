@@ -24,6 +24,7 @@ use crate::{Error, Result, http, http::TrustRoots};
 
 /// 自动探测得到的校园网 Portal 地址与客户端 IP 信息。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PortalInfo {
     /// Portal 认证页面根地址（用于静态脚本与门户资源）。
@@ -198,6 +199,7 @@ fn portal_server_url(auth_url: &Url, script: Option<&str>) -> Result<Url> {
 
 /// 校园网 Portal 提供的运营商选项信息。
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct IspInfo {
     /// 运营商显示名称（如“校园网”“中国移动”）。
@@ -208,6 +210,7 @@ pub struct IspInfo {
 
 /// Portal 认证与下线请求参数的编码方式。
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PortalEncryption {
     /// 明文参数传输（登录密码做标准 Base64 编码）。
@@ -219,6 +222,7 @@ pub enum PortalEncryption {
 
 /// Portal 认证或下线接口返回的 JSONP 结果。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct AuthResult {
     /// 服务端结果码（`1` 表示操作成功）。
@@ -259,6 +263,7 @@ impl AuthResult {
 
 /// Portal 登录请求的本地源地址选择方式。
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PortalSourceAddress {
     /// 将 `user_ip` 绑定为套接字源地址（终端直接接入校园网，`user_ip` 是本机网卡地址）。
@@ -644,6 +649,7 @@ pub fn local_ip(target: IpAddr) -> std::io::Result<IpAddr> {
 
 /// 校园网自助服务系统返回的当前在线终端信息。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineDevice {
     /// 宽带远程接入服务器（BRAS）标识。
@@ -656,6 +662,7 @@ pub struct OnlineDevice {
     /// 终端分配的内网 IP 地址文本。
     pub ip: String,
     /// 终端登录时间（`Asia/Shanghai` 时区）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::ZonedDateTime"))]
     pub login_time: ZonedDateTime,
     /// 终端 MAC 地址文本。
     pub mac: String,

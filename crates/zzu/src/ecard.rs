@@ -47,8 +47,19 @@ const ELECTRIC_APP_ID: &str = "electric";
 /// # Ok::<(), zzu::Error>(())
 /// ```
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from, !into)
+)]
 #[serde(try_from = "String", into = "String")]
-pub struct RoomId(String);
+pub struct RoomId(
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(regex(pattern = r"^[^-]+-[^-]+--[^-]+-[^-]+$"))
+    )]
+    String,
+);
 
 impl FromStr for RoomId {
     type Err = Error;

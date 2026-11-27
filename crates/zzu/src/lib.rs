@@ -5,7 +5,8 @@
 //! - `eas`（依赖 `auth`）：本科教务、课表、日历导出、成绩单、考试安排、培养方案与空教室查询；
 //! - `ecard`（依赖 `auth`）：校园卡余额、在线校园码、交易流水、宿舍电控与充值；
 //! - `mail`（依赖 `auth`）：校园邮箱网页入口、收件箱未读数与邮件摘要查询；
-//! - `network`：校园网 Portal 自动探测认证、本机出口 IP 探测与自助服务设备管理。
+//! - `network`：校园网 Portal 自动探测认证、本机出口 IP 探测与自助服务设备管理；
+//! - `schemars`（可选）：为所有公开可序列化数据模型实现 `schemars::JsonSchema`。
 //!
 //! 所有网络操作默认不设隐式超时，可通过 `tokio::time::timeout` 或 [`http_client_builder`] 按需配置。
 
@@ -34,6 +35,8 @@ mod error;
 mod http;
 #[cfg(feature = "ecard")]
 mod money;
+#[cfg(all(feature = "schemars", any(feature = "auth", feature = "network")))]
+mod schema;
 
 pub use error::{
     AuthenticationError, AuthenticationErrorKind, CryptoError, CryptoErrorKind, DecodeError,

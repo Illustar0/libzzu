@@ -10,6 +10,11 @@ use super::common::{NamedEntity, deserialize_null_default, trim_non_empty};
 ///
 /// 序列化为统一的 `snake_case` 字符串；反序列化时同时兼容中英文原始状态词（如将上游 `"unrepaired"` / `"未修"` 统一归一化为 `"not_taken"`）。
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum CompletionStatus {
     /// 已通过（上游 `"passed"` / `"通过"`，序列化为 `"passed"`）。
     Passed,
@@ -23,6 +28,7 @@ pub enum CompletionStatus {
     /// 免修（上游 `"exempt"` / `"skip"` / `"免修"`，序列化为 `"exempt"`）。
     Exempt,
     /// 上游返回的其他未知状态标识。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -84,6 +90,7 @@ impl<'de> Deserialize<'de> for CompletionStatus {
 
 /// 培养方案内或计划外的单门课程修读进度。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PlanCourse {
     /// 课程数字 ID。
@@ -124,6 +131,7 @@ pub struct PlanCourse {
 
 /// 培养方案课程模块节点（支持多级子模块递归嵌套）。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PlanModule {
     /// 模块类别（如必修课、限选课、院任选课、校任选课）。
@@ -155,6 +163,7 @@ pub struct PlanModule {
 
 /// 单个培养类别（如主修、辅修）的培养方案整体完成进度。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProgramCompletion {
     /// 培养类别（如主修 `"01"`、辅修 `"02"`）。

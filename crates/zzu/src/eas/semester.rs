@@ -13,6 +13,11 @@ use super::common::trim_non_empty;
 /// 序列化为统一的 `snake_case` 字符串，反序列化时兼容教务上游的大写标识；
 /// 遇到未列举的取值时通过 [`Self::Other`] 原样保留。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum SemesterSeason {
     /// 春季学期（上游 `"SPRING"`，序列化为 `"spring"`）。
     Spring,
@@ -23,6 +28,7 @@ pub enum SemesterSeason {
     /// 冬季学期（上游 `"WINTER"`，序列化为 `"winter"`）。
     Winter,
     /// 上游返回的其他未知季节标识。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -76,6 +82,11 @@ impl<'de> Deserialize<'de> for SemesterSeason {
 /// 支持本地换算教学周：先按 [`Self::week_start_on_sunday`] 将日期对齐到周首日，
 /// 再结合 [`Self::start_date`]、[`Self::end_date`] 与 [`Self::week_indices`] 计算教学周序号。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawSemester")]
 pub struct Semester {
     /// 学期数字 ID。
@@ -91,8 +102,10 @@ pub struct Semester {
     /// 学期季节。
     pub season: SemesterSeason,
     /// 学期起始公历日期（含）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub start_date: Date,
     /// 学期结束公历日期（含）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub end_date: Date,
     /// 教学周是否以周日作为每周第一天。
     pub week_start_on_sunday: bool,

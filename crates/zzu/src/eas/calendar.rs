@@ -11,6 +11,7 @@ use super::timetable::{SessionView, Timetable};
 
 /// 将 [`Timetable`] 导出为 `iCalendar`（`.ics`）时的筛选与展示配置。
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CalendarExportOptions {
     /// 仅导出指定教学周列表；为 `None` 或空时导出全部周次。
@@ -21,9 +22,11 @@ pub struct CalendarExportOptions {
     pub class_ids: Option<Vec<i64>>,
     /// 仅导出不早于该公历日期的排课（含当日）。
     #[serde(default)]
+    #[cfg_attr(feature = "schemars", schemars(with = "Option<crate::schema::Date>"))]
     pub start_date: Option<Date>,
     /// 仅导出不晚于该公历日期的排课（含当日）。
     #[serde(default)]
+    #[cfg_attr(feature = "schemars", schemars(with = "Option<crate::schema::Date>"))]
     pub end_date: Option<Date>,
     /// 课前提醒提前分钟数列表（例如 `[15]` 表示上课前 15 分钟提醒；空列表不生成提醒）。
     #[serde(default)]

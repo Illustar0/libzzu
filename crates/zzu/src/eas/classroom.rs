@@ -22,6 +22,7 @@ pub const DEFAULT_CLASSROOM_CONCURRENCY: usize = 8;
 
 /// 校区元数据。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Campus {
     /// 校区数字 ID。
@@ -70,6 +71,7 @@ impl From<RawCampus> for Campus {
 
 /// 教学楼元数据。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Building {
     /// 教学楼数字 ID。
@@ -124,6 +126,7 @@ impl From<RawBuilding> for Building {
 
 /// 教室类型元数据（如普通教室、多媒体教室、智慧教室）。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct RoomType {
     /// 教室类型数字 ID。
@@ -169,6 +172,11 @@ impl From<RawRoomType> for RoomType {
 /// 各列表保持扁平结构，既可用于构建前端筛选项与节次网格，也便于通过
 /// [`ClassroomOccupancy::building_id`] 反查教学楼与所属校区信息。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawClassroomCatalog")]
 pub struct ClassroomCatalog {
     /// 全部校区列表。
@@ -228,9 +236,11 @@ impl TryFrom<RawClassroomCatalog> for ClassroomCatalog {
 
 /// 教室占用查询条件。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ClassroomQuery {
     /// 查询公历日期（必填）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub date: Date,
     /// 校区 ID（空表示不限校区）。
     #[serde(default)]
@@ -279,6 +289,7 @@ impl ClassroomQuery {
 
 /// 全量并发拉取教室占用时的分片与并发配置。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ClassroomFetchOptions {
     /// 单次分页请求条数（默认 [`DEFAULT_CLASSROOM_PAGE_SIZE`]，即 `44`）。
@@ -329,6 +340,11 @@ pub(crate) fn validate_page_size(page_size: u32) -> Result<()> {
 /// 序列化为统一的 `snake_case` 字符串，同时兼容反序列化教务上游的原始 `PascalCase` 标识；
 /// 遇到未来新增的未知活动类型时通过 [`Self::Other`] 保留原始文本而不报错。
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(rename_all = "snake_case")
+)]
 pub enum RoomActivityType {
     /// 常规课程排课（上游 `"Lesson"`，序列化为 `"lesson"`）。
     Lesson,
@@ -341,6 +357,7 @@ pub enum RoomActivityType {
     /// 调课占用（上游 `"ScheduleChange"`，序列化为 `"schedule_change"`）。
     ScheduleChange,
     /// 上游返回的其他未知活动类型，原样保留字符串。
+    #[cfg_attr(feature = "schemars", schemars(untagged))]
     Other(String),
 }
 
@@ -396,6 +413,11 @@ impl<'de> Deserialize<'de> for RoomActivityType {
 /// 上游接口当前不回填节次字段（`unitStart` / `unitEnd` 恒为 `null`），
 /// 因此占用范围以 `Asia/Shanghai` 时区的时间区间 `[start_time, end_time)` 表示。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawRoomOccupation")]
 pub struct RoomOccupation {
     /// 关联活动 ID（实验项目等场景可能为 `None`）。
@@ -407,10 +429,13 @@ pub struct RoomOccupation {
     /// 占用活动英文名称或说明。
     pub activity_name_en: Option<String>,
     /// 占用公历日期。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub date: Date,
     /// 占用开始时间（`Asia/Shanghai` 时区）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::ZonedDateTime"))]
     pub start_time: ZonedDateTime,
     /// 占用结束时间（`Asia/Shanghai` 时区，严格晚于 `start_time`）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::ZonedDateTime"))]
     pub end_time: ZonedDateTime,
     /// 授课教师或借用负责人中文姓名（未提供时为空字符串）。
     pub teacher_name: String,
@@ -467,6 +492,7 @@ impl TryFrom<RawRoomOccupation> for RoomOccupation {
 /// 上游接口在返回教室对象时未回填 `floor`、`seatsForLesson`、`enabled`、`virtual`、`experiment`
 /// （始终返回零值 `0` / `false`），因此不在领域模型中暴露这些无效字段。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ClassroomOccupancy {
     /// 教室数字 ID。
@@ -561,6 +587,7 @@ impl ClassroomOccupancy {
 
 /// 教室占用单页查询结果。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ClassroomPage {
     /// 当前页返回的教室占用列表。

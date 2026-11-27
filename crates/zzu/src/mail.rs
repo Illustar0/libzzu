@@ -24,6 +24,7 @@ pub const DEFAULT_MAIL_PAGE_SIZE: u32 = 20;
 
 /// 收件箱邮件摘要的单页查询结果。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct MailMessagePage {
     /// 当前页的邮件摘要列表（按接收时间倒序排列）。
@@ -43,6 +44,7 @@ pub struct MailMessagePage {
 /// 仅承载列表预览所需的发件人、主题、摘要片段、时间与状态标记，不包含富文本正文与附件内容；
 /// 阅读完整邮件或回复请通过 [`MailClient::webmail_url`] 跳转网页版完成。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct MailMessage {
     /// Coremail 邮件唯一标识。
@@ -58,8 +60,13 @@ pub struct MailMessage {
     pub summary: Option<String>,
     /// 发信头声明的发送时间（`Asia/Shanghai` 时区；缺失或格式无法识别时为 `None`）。
     #[serde(default)]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "Option<crate::schema::ZonedDateTime>")
+    )]
     pub sent_time: Option<ZonedDateTime>,
     /// 邮件到达服务器的时间（`Asia/Shanghai` 时区）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::ZonedDateTime"))]
     pub received_time: ZonedDateTime,
     /// 邮件原始大小（单位：字节）。
     pub size: u64,

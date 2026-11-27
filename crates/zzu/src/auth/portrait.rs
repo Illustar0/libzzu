@@ -16,12 +16,14 @@ const PORTRAIT_URL: &str =
 /// Rust 调用方可直接读取原始图像字节 [`Self::bytes`]；JSON 序列化与反序列化时，
 /// 图像内容自动按标准 Base64（RFC 4648）编码为 `data` 字符串字段。
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Portrait {
     /// 图像 MIME 媒体类型（如 `"image/png"`、`"image/jpeg"`，已剥离附加参数并转为小写）。
     pub media_type: String,
     /// 原始图像二进制字节流（JSON 中编码为标准 Base64 字符串 `data`）。
     #[serde(rename = "data", with = "base64_bytes")]
+    #[cfg_attr(feature = "schemars", schemars(with = "String"))]
     pub bytes: Vec<u8>,
 }
 

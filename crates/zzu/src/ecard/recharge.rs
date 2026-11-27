@@ -13,6 +13,7 @@ const CASHIER_URL: &str = "https://payment.v.zzu.edu.cn/WapCashDesk";
 
 /// 校园卡充值面额与网页收银台配置。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct RechargeConfig {
     /// 服务端预设的可选充值面额列表（单位：元）。
@@ -45,6 +46,37 @@ impl Serialize for RechargeOrder {
         state.serialize_field("payment", &self.payment)?;
         state.serialize_field("checkoutUrl", &self.checkout_url)?;
         state.end()
+    }
+}
+
+#[cfg(feature = "schemars")]
+#[cfg_attr(docsrs, doc(cfg(feature = "schemars")))]
+impl schemars::JsonSchema for RechargeOrder {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "RechargeOrder".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::RechargeOrder").into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        /// 已创建的校园卡网页充值订单。
+        #[derive(schemars::JsonSchema)]
+        #[serde(rename_all = "camelCase")]
+        #[expect(dead_code)]
+        struct RechargeOrderWire {
+            /// 学校收银台订单流水号。
+            id: String,
+            /// 订单充值金额（单位：元）。
+            amount: u32,
+            /// 收银台预支付载荷。
+            payment: WapPayment,
+            /// 未预选支付渠道的学校网页收银台 HTTPS 地址。
+            checkout_url: Url,
+        }
+
+        RechargeOrderWire::json_schema(generator)
     }
 }
 
@@ -91,6 +123,7 @@ impl fmt::Debug for RechargeOrder {
 
 /// 学校网页收银台支持的支付渠道（如支付宝、微信支付）。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentChannel {
     /// 支付渠道编码。
@@ -124,6 +157,7 @@ impl From<RawPaymentChannel> for PaymentChannel {
 
 /// 向收银台预下单时上报的客户端设备平台。
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PaymentDevice {
     /// Android 平台（默认值）。
@@ -135,6 +169,7 @@ pub enum PaymentDevice {
 
 /// 预下单时上报的付款端环境信息，默认为 [`PaymentDevice::Android`] 与空 IP。
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PaymentContext {
     /// 付款端设备平台。
@@ -156,6 +191,11 @@ where
 
 /// 收银台预下单后返回的第三方支付拉起动作。
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(tag = "kind", rename_all = "snake_case", try_from = "RawPaymentAction")]
 #[non_exhaustive]
 pub enum PaymentAction {
@@ -172,6 +212,7 @@ pub enum PaymentAction {
         url: Url,
         /// 按原始顺序排列的表单键值对；可能包含同名字段，提交时须保留重复项与顺序。
         #[serde(serialize_with = "serialize_form_fields")]
+        #[cfg_attr(feature = "schemars", schemars(with = "Vec<RawFormField>"))]
         fields: Vec<(String, String)>,
     },
 }
@@ -191,6 +232,7 @@ enum RawPaymentAction {
 }
 
 #[derive(Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema), schemars(inline))]
 struct RawFormField {
     name: String,
     value: String,
@@ -478,6 +520,7 @@ fn validate_order_fields(
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema), schemars(inline))]
 #[serde(rename_all = "camelCase")]
 struct WapPayment {
     order_info: OrderInfo,
@@ -512,6 +555,7 @@ impl WapPayment {
 }
 
 #[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema), schemars(inline))]
 struct OrderInfo {
     #[serde(rename = "partnerid")]
     partner_id: String,

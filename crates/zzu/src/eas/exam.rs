@@ -12,6 +12,11 @@ use super::common::{NamedEntity, deserialize_null_default, parse_time, trim_non_
 /// [`Self::date`]、[`Self::start_time`]、[`Self::end_time`] 与 [`Self::place`] 可能为 `None`。
 /// 一旦排定起止时间，恒满足 `start_time < end_time` 且 `date`、`weekday` 与 `start_time` 一致。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(
+    feature = "schemars",
+    derive(schemars::JsonSchema),
+    schemars(!try_from)
+)]
 #[serde(rename_all = "camelCase", try_from = "RawExam")]
 pub struct Exam {
     /// 考试安排记录 ID（上游提供时返回）。
@@ -36,15 +41,24 @@ pub struct Exam {
     pub cultivate_type: Option<NamedEntity>,
     /// 考试公历日期（尚未排定时为 `None`）。
     #[serde(default)]
+    #[cfg_attr(feature = "schemars", schemars(with = "Option<crate::schema::Date>"))]
     pub date: Option<Date>,
     /// 星期序号（`1` 表示周一，`7` 表示周日；`date` 存在时恒有值并与之匹配）。
     #[serde(default)]
     pub weekday: Option<u8>,
     /// 考试开始时间（`Asia/Shanghai` 时区；尚未排定时为 `None`）。
     #[serde(default)]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "Option<crate::schema::ZonedDateTime>")
+    )]
     pub start_time: Option<ZonedDateTime>,
     /// 考试结束时间（`Asia/Shanghai` 时区；与 `start_time` 成对出现且严格晚于 `start_time`）。
     #[serde(default)]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(with = "Option<crate::schema::ZonedDateTime>")
+    )]
     pub end_time: Option<ZonedDateTime>,
     /// 考场地点中文描述（尚未排定考场时为 `None`）。
     #[serde(default)]

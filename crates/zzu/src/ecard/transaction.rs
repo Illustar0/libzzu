@@ -13,6 +13,7 @@ pub const DEFAULT_TRANSACTION_PAGE_SIZE: u32 = 30;
 
 /// 校园卡交易流水的业务类别。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TransactionKind {
@@ -36,11 +37,14 @@ impl TransactionKind {
 
 /// 校园卡账单流水筛选条件（起止日期均含当日）。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionQuery {
     /// 查询起始公历日期（含当日）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub start_date: Date,
     /// 查询截止公历日期（含当日）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::Date"))]
     pub end_date: Date,
     /// 交易类别筛选；为 `None` 时查询全部类别（消费、充值与补助）。
     #[serde(default)]
@@ -61,11 +65,13 @@ impl TransactionQuery {
 
 /// 校园卡单笔交易账单记录。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     /// 校园卡交易流水号。
     pub id: String,
     /// 交易发生时间（`Asia/Shanghai` 时区）。
+    #[cfg_attr(feature = "schemars", schemars(with = "crate::schema::ZonedDateTime"))]
     pub time: ZonedDateTime,
     /// 交易金额（单位：元；消费通常为负数，充值与补助通常为正数）。
     #[serde(deserialize_with = "crate::money::deserialize_decimal")]
