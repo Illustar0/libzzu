@@ -149,17 +149,6 @@ impl EcardClient {
     /// - 客户端尚未调用 [`Self::login`] 或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
     /// - 网络传输失败、远端返回业务错误或面额字段解析失败时返回错误。
     pub async fn recharge_config(&self) -> Result<RechargeConfig> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Config {
-            amt_group_list: Vec<Amount>,
-            wap_pay_enable: bool,
-            wap_pay_code: String,
-        }
-        #[derive(Deserialize)]
-        struct Amount {
-            amt: String,
-        }
         let token = self.access_token().await?;
         let response = http::json(
             self.http
@@ -167,19 +156,7 @@ impl EcardClient {
                 .header("Authorization", token),
         )
         .await?;
-        let context = response.context.clone();
-        let config: Config = http::ecard_data(response)?;
-        let amounts = config
-            .amt_group_list
-            .into_iter()
-            .map(|amount| amount.amt.parse::<u32>().map_err(Error::decode))
-            .collect::<Result<_>>()
-            .map_err(|error| error.with_request(context))?;
-        Ok(RechargeConfig {
-            amounts,
-            is_browser_payment_enabled: config.wap_pay_enable,
-            pay_code: config.wap_pay_code,
-        })
+        parse_recharge_config_response(response)
     }
 
     /// 创建指定整元金额 `amount` 的校园卡网页充值订单。
@@ -415,6 +392,36 @@ struct OrderInfo {
     extra: BTreeMap<String, Value>,
 }
 
+fn parse_recharge_config_response(response: http::JsonResponse) -> Result<RechargeConfig> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Config {
+        amt_group_list: Vec<Amount>,
+        wap_pay_enable: bool,
+        wap_pay_code: String,
+    }
+    #[derive(Deserialize)]
+    struct Amount {
+        amt: String,
+    }
+    let context = response.context.clone();
+    let config: Config = http::ecard_data(response)?;
+    if config.wap_pay_enable && config.wap_pay_code.is_empty() {
+        return Err(Error::decode_message("充值配置缺少支付代码".into()).with_request(context));
+    }
+    let amounts = config
+        .amt_group_list
+        .into_iter()
+        .map(|amount| amount.amt.parse::<u32>().map_err(Error::decode))
+        .collect::<Result<_>>()
+        .map_err(|error| error.with_request(context))?;
+    Ok(RechargeConfig {
+        amounts,
+        is_browser_payment_enabled: config.wap_pay_enable,
+        pay_code: config.wap_pay_code,
+    })
+}
+
 fn validate_channel(channel: &PaymentChannel) -> Result<()> {
     if channel.id.is_empty() {
         return Err(Error::invalid_input("支付渠道 ID 不能为空".into()));
@@ -644,5 +651,42 @@ mod tests {
                 .unwrap_err()
                 .is_decode()
         );
+
+        let config_context = Arc::new(crate::RequestContext {
+            method: "POST".into(),
+            url: format!("{ECARD_URL}/recharge/config"),
+            status_code: Some(200),
+            error_code: None,
+            response_body: None,
+        });
+        let missing_code = http::JsonResponse::new(
+            json!({
+                "success": true,
+                "resultData": {
+                    "amtGroupList": [{"amt": "10"}],
+                    "wapPayEnable": true,
+                    "wapPayCode": ""
+                }
+            }),
+            config_context.clone(),
+        );
+        let err = parse_recharge_config_response(missing_code).unwrap_err();
+        assert!(err.is_decode());
+        assert!(err.request().is_some());
+
+        let disabled_empty_code = http::JsonResponse::new(
+            json!({
+                "success": true,
+                "resultData": {
+                    "amtGroupList": [{"amt": "10"}],
+                    "wapPayEnable": false,
+                    "wapPayCode": ""
+                }
+            }),
+            config_context,
+        );
+        let config = parse_recharge_config_response(disabled_empty_code).unwrap();
+        assert!(!config.is_browser_payment_enabled);
+        assert!(!format!("{config:?}").contains("RequestContext"));
     }
 }

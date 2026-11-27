@@ -61,6 +61,33 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
     let response = http::send(client.get("http://www.bilibili.com"))
         .await?
         .require_success()?;
+    let (pre_auth_url, user_ip) = parse_discovered_portal(&response)?;
+    let js_url = pre_auth_url
+        .join("a41.js")
+        .map_err(|error| Error::decode(error).with_request(response.context.clone()))?;
+    let script_response = http::send_with_text_decoder(client.get(js_url), async |response| {
+        let bytes = response.bytes().await?;
+        Ok(decode_portal_text(&bytes))
+    })
+    .await
+    .and_then(http::Response::require_success)
+    .ok();
+    let script = script_response.as_ref().map(http::Response::body);
+    let script_context = script_response
+        .as_ref()
+        .map_or(&response.context, |script| &script.context);
+    let auth_url = auth_url(&pre_auth_url, script)
+        .map_err(|error| error.with_request(script_context.clone()))?;
+    let portal_server_url = portal_server_url(&auth_url, script)
+        .map_err(|error| error.with_request(script_context.clone()))?;
+    Ok(PortalInfo {
+        auth_url,
+        portal_server_url,
+        user_ip,
+    })
+}
+
+fn parse_discovered_portal(response: &http::Response) -> Result<(Url, IpAddr)> {
     if response.url.scheme() == "https" && response.url.host_str() == Some("www.bilibili.com") {
         return Err(Error::remote("未发现校园网认证重定向，可能已经联网".into()));
     }
@@ -68,7 +95,8 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
         let base = response.url.clone();
         let href = html_attribute(response.body(), "a[href]", "href")
             .map_err(|error| error.with_request(response.context.clone()))?;
-        base.join(&href).map_err(Error::decode)?
+        base.join(&href)
+            .map_err(|error| Error::decode(error).with_request(response.context.clone()))?
     } else {
         response.url.clone()
     };
@@ -76,28 +104,19 @@ pub async fn discover_portal_info_with_trust_roots(roots: &TrustRoots) -> Result
     let user_ip = portal_url
         .query_pairs()
         .find(|(key, _)| key == "userip" || key == "wlanuserip")
-        .ok_or_else(|| Error::decode_message("Portal URL 缺少客户端 IP".into()))?
+        .ok_or_else(|| {
+            Error::decode_message("Portal URL 缺少客户端 IP".into())
+                .with_request(response.context.clone())
+        })?
         .1
         .parse()
-        .map_err(|_| Error::decode_message("Portal 客户端 IP 无效".into()))?;
-    let pre_auth_url =
-        Url::parse(&portal_url.origin().ascii_serialization()).map_err(Error::decode)?;
-    let js_url = pre_auth_url.join("a41.js").map_err(Error::decode)?;
-    let script = http::send_with_text_decoder(client.get(js_url), async |response| {
-        let bytes = response.bytes().await?;
-        Ok(decode_portal_text(&bytes))
-    })
-    .await
-    .and_then(http::Response::require_success)
-    .ok()
-    .map(|response| response.body().to_owned());
-    let auth_url = auth_url(&pre_auth_url, script.as_deref())?;
-    let portal_server_url = portal_server_url(&auth_url, script.as_deref())?;
-    Ok(PortalInfo {
-        auth_url,
-        portal_server_url,
-        user_ip,
-    })
+        .map_err(|_| {
+            Error::decode_message("Portal 客户端 IP 无效".into())
+                .with_request(response.context.clone())
+        })?;
+    let pre_auth_url = Url::parse(&portal_url.origin().ascii_serialization())
+        .map_err(|error| Error::decode(error).with_request(response.context.clone()))?;
+    Ok((pre_auth_url, user_ip))
 }
 
 /// 只解析出 IPv4 地址的 DNS 解析器。
@@ -908,6 +927,30 @@ mod tests {
             .unwrap(),
             "a&b"
         );
+
+        let online_probe = http::Response {
+            headers: reqwest::header::HeaderMap::new(),
+            url: "https://www.bilibili.com/".parse().unwrap(),
+            context: Arc::new(crate::RequestContext {
+                method: "GET".into(),
+                url: "http://www.bilibili.com/".into(),
+                status_code: Some(200),
+                error_code: None,
+                response_body: Some("<html>bilibili</html>".into()),
+            }),
+        };
+        let err = parse_discovered_portal(&online_probe).unwrap_err();
+        assert!(err.is_remote());
+        assert!(err.request().is_none());
+
+        let missing_ip = http::Response {
+            headers: reqwest::header::HeaderMap::new(),
+            url: "http://10.0.0.1/a79.htm".parse().unwrap(),
+            context: online_probe.context,
+        };
+        let err = parse_discovered_portal(&missing_ip).unwrap_err();
+        assert!(err.is_decode());
+        assert!(err.request().is_some());
     }
 
     #[test]

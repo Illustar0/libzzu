@@ -28,18 +28,18 @@ pub use transcript::{
     CourseGrade, GpaRank, GradeSemester, GradeState, ProcessGrade, StudyType, SubGrade, Transcript,
 };
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use futures_util::future::{try_join, try_join5};
 use futures_util::stream::{self, StreamExt, TryStreamExt};
 use reqwest::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 
-use crate::{Error, Result, auth::CasClient, http};
+use crate::{Error, RequestContext, Result, auth::CasClient, http};
 use classroom::{RawClassroomPage, RoomsRequest, merge_pages, validate_page, validate_page_size};
 use exam::normalize_exams;
 use plan::{RawCompletionInfo, build_program_completion};
-use timetable::{RawCourseTableEntry, build_timetable};
+use timetable::{RawCourseTableEntry, build_timetable, normalize_unit_layouts};
 use transcript::{RawCourseGrade, RawGpaRank, build_transcript};
 
 const EAS_URL: &str = "https://jwxt.zzu.edu.cn";
@@ -95,6 +95,16 @@ impl UndergradEasClient {
     async fn fetch_with_token<T: DeserializeOwned>(&self, token: &str, path: &str) -> Result<T> {
         let response = http::json(self.get_with_token(token, path)).await?;
         http::data(response, "result")
+    }
+
+    async fn fetch_with_context<T: DeserializeOwned>(
+        &self,
+        token: &str,
+        path: &str,
+    ) -> Result<(T, Arc<RequestContext>)> {
+        let response = http::json(self.get_with_token(token, path)).await?;
+        let context = response.context.clone();
+        Ok((http::data(response, "result")?, context))
     }
 
     /// 验证教务门户会话，并拉取、缓存当前学期元数据。
@@ -196,14 +206,22 @@ impl UndergradEasClient {
                 .get_with_token(&token, &course_table_path)
                 .query(&[("hasExperiment", options.include_experiments)]);
             let response = http::json(request).await?;
-            http::data::<Vec<RawCourseTableEntry>>(response, "result")
+            let context = response.context.clone();
+            Ok::<_, Error>((
+                http::data::<Vec<RawCourseTableEntry>>(response, "result")?,
+                context,
+            ))
         };
-        let fetch_layouts = self.fetch_with_token::<BTreeMap<String, Vec<CourseUnit>>>(
+        let fetch_layouts = self.fetch_with_context::<BTreeMap<String, Vec<CourseUnit>>>(
             &token,
             "/eams-micro-server/api/v1/system/get-all-course-units",
         );
-        let (entries, unit_layouts) = try_join(fetch_entries, fetch_layouts).await?;
-        build_timetable(semester, entries, unit_layouts)
+        let ((entries, entries_context), (unit_layouts, layouts_context)) =
+            try_join(fetch_entries, fetch_layouts).await?;
+        let normalized_layouts = normalize_unit_layouts(unit_layouts)
+            .map_err(|error| error.with_request(layouts_context))?;
+        build_timetable(semester, entries, normalized_layouts)
+            .map_err(|error| error.with_request(entries_context))
     }
 
     /// 并发查询当前学生的完整成绩单与累计专业绩点排名。
@@ -260,8 +278,8 @@ impl UndergradEasClient {
     pub async fn program_completion(&self) -> Result<Vec<ProgramCompletion>> {
         self.current_semester()?;
         let token = self.cas.user_token().await?;
-        let cultivate_types = self
-            .fetch_with_token::<Vec<NamedEntity>>(
+        let (cultivate_types, cultivate_context) = self
+            .fetch_with_context::<Vec<NamedEntity>>(
                 &token,
                 "/eams-micro-server/api/v1/plan/search/completion/cultivateTypes",
             )
@@ -269,10 +287,12 @@ impl UndergradEasClient {
         stream::iter(cultivate_types)
             .map(|cultivate| {
                 let token = &token;
+                let cultivate_context = cultivate_context.clone();
                 async move {
                     let code = cultivate.code.trim();
                     if code.is_empty() {
-                        return Err(Error::decode_message("培养类别缺少有效的 code 字段".into()));
+                        return Err(Error::decode_message("培养类别缺少有效的 code 字段".into())
+                            .with_request(cultivate_context));
                     }
                     let request = self
                         .get_with_token(
@@ -302,7 +322,7 @@ impl UndergradEasClient {
     pub async fn classroom_catalog(&self) -> Result<ClassroomCatalog> {
         self.current_semester()?;
         let token = self.cas.user_token().await?;
-        let (campuses, buildings, room_types, floors, units) = try_join5(
+        let (campuses, buildings, room_types, floors, (units, units_context)) = try_join5(
             self.fetch_with_token::<Vec<Campus>>(
                 &token,
                 "/eams-micro-server/api/v1/room/place/campus",
@@ -319,13 +339,14 @@ impl UndergradEasClient {
                 &token,
                 "/eams-micro-server/api/v1/room/place/floors",
             ),
-            self.fetch_with_token::<Vec<CourseUnit>>(
+            self.fetch_with_context::<Vec<CourseUnit>>(
                 &token,
                 "/eams-micro-server/api/v1/room/system/course-units",
             ),
         )
         .await?;
         ClassroomCatalog::new(campuses, buildings, room_types, floors, units)
+            .map_err(|error| error.with_request(units_context))
     }
 
     async fn fetch_classroom_page(

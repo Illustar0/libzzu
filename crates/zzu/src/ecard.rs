@@ -388,11 +388,7 @@ impl EcardClient {
                 .json(&json!({"datetime":datetime})),
         )
         .await?;
-        let transaction_id: String = http::ecard_data(response)?;
-        if transaction_id.is_empty() {
-            return Err(Error::decode_message("扣款交易号为空".into()));
-        }
-        Ok(transaction_id)
+        parse_transaction_id_response(response)
     }
 
     /// 清除本地缓存的校园卡会话与默认房间信息（不影响底层共享的 [`CasClient`]）。
@@ -449,19 +445,32 @@ fn decrypt_response(response: &Value, sm4_key: &str) -> Result<Value> {
     }
 }
 
-async fn fetch_session(http: &Client, cas_token: String) -> Result<Session> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TokenData {
-        access_token: String,
-        refresh_token: String,
+fn parse_transaction_id_response(response: http::JsonResponse) -> Result<String> {
+    let context = response.context.clone();
+    let transaction_id: String = http::ecard_data(response)?;
+    if transaction_id.is_empty() {
+        return Err(Error::decode_message("扣款交易号为空".into()).with_request(context));
     }
+    Ok(transaction_id)
+}
+
+async fn fetch_session(http: &Client, cas_token: String) -> Result<Session> {
     let request = http.get(format!("{ECARD_URL}/auth/host/open")).query(&[
         ("host", "11"),
         ("org", "2"),
         ("token", cas_token.as_str()),
     ]);
     let response = http::send(request).await?.allow_redirect()?;
+    let tid = parse_session_redirect(&response)?;
+    let response = http::json(
+        http.post(format!("{ECARD_URL}/auth/getToken"))
+            .json(&json!({"tid":tid})),
+    )
+    .await?;
+    parse_session_tokens(response, cas_token)
+}
+
+fn parse_session_redirect(response: &http::Response) -> Result<String> {
     let location = response
         .headers
         .get("location")
@@ -470,21 +479,32 @@ async fn fetch_session(http: &Client, cas_token: String) -> Result<Session> {
             Error::decode_message("校园卡响应缺少 Location".into())
                 .with_request(response.context.clone())
         })?;
-    let redirect = response.url.join(location).map_err(Error::decode)?;
-    let tid = redirect
+    let redirect = response
+        .url
+        .join(location)
+        .map_err(|error| Error::decode(error).with_request(response.context.clone()))?;
+    redirect
         .query_pairs()
         .find(|(key, _)| key == "tid")
         .map(|(_, value)| value.into_owned())
         .filter(|tid| !tid.is_empty())
-        .ok_or_else(|| Error::decode_message("校园卡重定向缺少 tid".into()))?;
-    let response = http::json(
-        http.post(format!("{ECARD_URL}/auth/getToken"))
-            .json(&json!({"tid":tid})),
-    )
-    .await?;
+        .ok_or_else(|| {
+            Error::decode_message("校园卡重定向缺少 tid".into())
+                .with_request(response.context.clone())
+        })
+}
+
+fn parse_session_tokens(response: http::JsonResponse, cas_token: String) -> Result<Session> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TokenData {
+        access_token: String,
+        refresh_token: String,
+    }
+    let context = response.context.clone();
     let tokens: TokenData = http::ecard_data(response)?;
     if tokens.access_token.is_empty() || tokens.refresh_token.is_empty() {
-        return Err(Error::decode_message("校园卡 Token 为空".into()));
+        return Err(Error::decode_message("校园卡 Token 为空".into()).with_request(context));
     }
     Ok(Session {
         access_token: tokens.access_token,
@@ -722,5 +742,60 @@ mod tests {
         let error = parse_balance_response(invalid_balance, key).unwrap_err();
         assert!(error.is_decode());
         assert!(error.request().is_some());
+    }
+
+    #[test]
+    fn session_and_transaction_parsers_attach_request_context_on_malformed_payloads() {
+        use reqwest::header::{HeaderMap, HeaderValue, LOCATION};
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            LOCATION,
+            HeaderValue::from_static("https://ecard.v.zzu.edu.cn/#/home"),
+        );
+        let redirect = http::Response {
+            headers,
+            url: format!("{ECARD_URL}/auth/host/open").parse().unwrap(),
+            context: Arc::new(RequestContext {
+                method: "GET".into(),
+                url: format!("{ECARD_URL}/auth/host/open"),
+                status_code: Some(302),
+                error_code: None,
+                response_body: Some(String::new()),
+            }),
+        };
+        let err = parse_session_redirect(&redirect).unwrap_err();
+        assert!(err.is_decode());
+        assert_eq!(err.request().unwrap().status_code, Some(302));
+
+        let empty_tokens = http::JsonResponse::new(
+            json!({"success": true, "resultData": {"accessToken": "", "refreshToken": "r"}}),
+            Arc::new(RequestContext {
+                method: "POST".into(),
+                url: format!("{ECARD_URL}/auth/getToken"),
+                status_code: Some(200),
+                error_code: None,
+                response_body: None,
+            }),
+        );
+        let err = parse_session_tokens(empty_tokens, "cas".into())
+            .err()
+            .unwrap();
+        assert!(err.is_decode());
+        assert!(err.request().is_some());
+
+        let empty_tid = http::JsonResponse::new(
+            json!({"success": true, "resultData": ""}),
+            Arc::new(RequestContext {
+                method: "POST".into(),
+                url: format!("{ECARD_URL}/consume/transaction"),
+                status_code: Some(200),
+                error_code: None,
+                response_body: None,
+            }),
+        );
+        let err = parse_transaction_id_response(empty_tid).unwrap_err();
+        assert!(err.is_decode());
+        assert!(err.request().is_some());
     }
 }

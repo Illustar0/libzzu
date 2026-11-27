@@ -1256,6 +1256,16 @@ pub(super) fn build_timetable(
     })
 }
 
+pub(super) fn normalize_unit_layouts(
+    layouts: BTreeMap<String, Vec<CourseUnit>>,
+) -> Result<BTreeMap<String, Vec<CourseUnit>>> {
+    let mut normalized: BTreeMap<String, Vec<CourseUnit>> = BTreeMap::new();
+    for (key, units) in layouts {
+        normalized.insert(key, normalize_course_units(units)?);
+    }
+    Ok(normalized)
+}
+
 /// 根据选课引用的作息布局 ID 与实际排课场次，选取最匹配的每日节次作息表。
 fn resolve_timetable_units(
     layouts: BTreeMap<String, Vec<CourseUnit>>,
@@ -1267,10 +1277,7 @@ fn resolve_timetable_units(
         .map(|session| session.end_unit)
         .max()
         .unwrap_or(0);
-    let mut normalized: BTreeMap<String, Vec<CourseUnit>> = BTreeMap::new();
-    for (key, units) in layouts {
-        normalized.insert(key, normalize_course_units(units)?);
-    }
+    let normalized = normalize_unit_layouts(layouts)?;
 
     // 优先从教学班显式引用的作息布局中选取节次覆盖最完整的一套（兼容跨院系混选）。
     let matched = referenced_layouts
