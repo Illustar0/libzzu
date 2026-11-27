@@ -82,14 +82,6 @@ struct CreateOrder {
     amount: u32,
 }
 
-/// 在订单的不透明状态之外补上 `id`，封装层把整个对象原样传回即可。
-#[derive(Serialize)]
-struct OrderReply<'a> {
-    id: &'a str,
-    #[serde(flatten)]
-    order: &'a RechargeOrder,
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WithOrder {
@@ -259,11 +251,7 @@ impl Service for Guarded<EcardClient> {
             "recharge_config" => reply(&self.read().await?.recharge_config().await?),
             "create_recharge_order" => {
                 let CreateOrder { amount } = parse(params)?;
-                let order = self.write().await?.create_recharge_order(amount).await?;
-                reply(&OrderReply {
-                    id: order.id(),
-                    order: &order,
-                })
+                reply(&self.write().await?.create_recharge_order(amount).await?)
             }
             "payment_channels" => {
                 let WithOrder { order } = parse(params)?;

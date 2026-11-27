@@ -25,12 +25,27 @@ pub struct RechargeConfig {
 ///
 /// 支持序列化保存并原样恢复，便于跳转外部收银台后在新进程中继续支付。
 /// 序列化结果包含支付凭据，切勿写入日志（[`fmt::Debug`] 实现已隐藏敏感字段）。
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Eq, PartialEq, Deserialize)]
+#[serde(try_from = "RawRechargeOrder")]
 pub struct RechargeOrder {
     amount: u32,
     payment: WapPayment,
     checkout_url: Url,
+}
+
+impl Serialize for RechargeOrder {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("RechargeOrder", 4)?;
+        state.serialize_field("id", self.id())?;
+        state.serialize_field("amount", &self.amount)?;
+        state.serialize_field("payment", &self.payment)?;
+        state.serialize_field("checkoutUrl", &self.checkout_url)?;
+        state.end()
+    }
 }
 
 impl RechargeOrder {
@@ -333,22 +348,7 @@ struct CreatedRecharge {
 
 impl CreatedRecharge {
     fn into_order(self, amount: u32) -> Result<RechargeOrder> {
-        let info = &self.wap_pay_info.order_info;
-        if info.order_id != self.partner_journo
-            || [
-                &info.partner_id,
-                &info.order_id,
-                &info.merchant_no,
-                &info.channel_no,
-            ]
-            .iter()
-            .any(|field| field.is_empty())
-            || info.amount_fen.parse::<u64>().ok() != Some(u64::from(amount) * 100)
-        {
-            return Err(Error::decode_message(
-                "充值订单标识或金额与请求不一致".into(),
-            ));
-        }
+        validate_order_fields(Some(&self.partner_journo), amount, &self.wap_pay_info)?;
         let checkout_url = self.wap_pay_info.checkout_url(None)?;
         Ok(RechargeOrder {
             amount,
@@ -358,7 +358,56 @@ impl CreatedRecharge {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRechargeOrder {
+    #[serde(default)]
+    id: Option<String>,
+    amount: u32,
+    payment: WapPayment,
+    checkout_url: String,
+}
+
+impl TryFrom<RawRechargeOrder> for RechargeOrder {
+    type Error = Error;
+
+    fn try_from(raw: RawRechargeOrder) -> Result<Self> {
+        validate_order_fields(raw.id.as_deref(), raw.amount, &raw.payment)?;
+        let checkout_url = web_url(&raw.checkout_url)?;
+        Ok(Self {
+            amount: raw.amount,
+            payment: raw.payment,
+            checkout_url,
+        })
+    }
+}
+
+fn validate_order_fields(
+    expected_id: Option<&str>,
+    amount: u32,
+    payment: &WapPayment,
+) -> Result<()> {
+    let info = &payment.order_info;
+    if amount == 0
+        || expected_id.is_some_and(|id| id != info.order_id)
+        || [
+            &info.partner_id,
+            &info.order_id,
+            &info.merchant_no,
+            &info.channel_no,
+        ]
+        .iter()
+        .any(|field| field.is_empty())
+        || info.amount_fen.parse::<u64>().ok() != Some(u64::from(amount) * 100)
+    {
+        return Err(Error::decode_message(
+            "充值订单标识或金额与请求不一致".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WapPayment {
     order_info: OrderInfo,
@@ -392,7 +441,7 @@ impl WapPayment {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 struct OrderInfo {
     #[serde(rename = "partnerid")]
     partner_id: String,
@@ -646,14 +695,28 @@ mod tests {
                 .any(|(key, value)| key == "callPaywayid" && value == "0106")
         );
         assert!(!format!("{order:?}").contains("test-payment-secret"));
-        let restored: RechargeOrder =
-            serde_json::from_value(serde_json::to_value(&order).unwrap()).unwrap();
-        assert_eq!(restored.id(), order.id());
-        assert_eq!(restored.amount(), order.amount());
+        let serialized_order = serde_json::to_value(&order).unwrap();
+        assert_eq!(serialized_order["id"], "school-order");
+        assert_eq!(serialized_order["amount"], 10);
+        let restored: RechargeOrder = serde_json::from_value(serialized_order.clone()).unwrap();
+        assert_eq!(restored, order);
         assert_eq!(
             restored.checkout_url_for(channel).unwrap(),
             order.checkout_url_for(channel).unwrap()
         );
+
+        let mut tampered_amount = serialized_order.clone();
+        tampered_amount["amount"] = json!(20);
+        assert!(serde_json::from_value::<RechargeOrder>(tampered_amount).is_err());
+
+        let mut tampered_id = serialized_order.clone();
+        tampered_id["id"] = json!("other-order");
+        assert!(serde_json::from_value::<RechargeOrder>(tampered_id).is_err());
+
+        let mut insecure_url = serialized_order;
+        insecure_url["checkoutUrl"] = json!("http://payment.v.zzu.edu.cn/pay");
+        assert!(serde_json::from_value::<RechargeOrder>(insecure_url).is_err());
+
         let created: CreatedRecharge = serde_json::from_value(payload).unwrap();
         assert!(created.into_order(20).unwrap_err().is_decode());
     }
