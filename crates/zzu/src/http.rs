@@ -294,11 +294,13 @@ pub(crate) fn check_status(response: &JsonResponse, status_key: &str) -> Result<
         .get(status_key)
         .ok_or_else(|| {
             Error::decode_message(format!("服务器响应缺少 {status_key}"))
+                .with_path(status_key)
                 .with_request(response.context.clone())
         })?
         .as_i64()
         .ok_or_else(|| {
             Error::decode_message(format!("{status_key} 必须为整数"))
+                .with_path(status_key)
                 .with_request(response.context.clone())
         })?;
     if status != 0 {
@@ -317,6 +319,7 @@ pub(crate) fn ecard_data<T: DeserializeOwned>(response: JsonResponse) -> Result<
         Some(false) => Err(remote_error(&response.value, response.context, "code")),
         None => Err(
             Error::decode_message("校园卡响应缺少有效的 success 字段".into())
+                .with_path("success")
                 .with_request(response.context),
         ),
     }
@@ -336,6 +339,7 @@ pub(crate) fn remote_error(
 fn decode_field<T: DeserializeOwned>(mut response: JsonResponse, key: &str) -> Result<T> {
     let field = response.value.get_mut(key).ok_or_else(|| {
         Error::decode_message(format!("服务器响应缺少 {key}"))
+            .with_path(key)
             .with_request(response.context.clone())
     })?;
     deserialize_value(field.take(), Some(key)).map_err(|error| error.with_request(response.context))
@@ -396,10 +400,11 @@ fn into_path_error(
             }
         }
     };
-    Error::decode(PathDecodeError {
-        path,
+    let source = PathDecodeError {
+        path: path.clone(),
         source: err.into_inner(),
-    })
+    };
+    Error::decode(source).with_path(path)
 }
 
 pub(crate) fn message(value: &Value) -> String {
@@ -540,11 +545,43 @@ mod tests {
             context: response(200, "{}").context,
         };
         let err = data::<Vec<GradeItem>>(nested_bad, "result").err().unwrap();
-        assert!(err.is_decode());
+        let Error::Decode(decode_err) = &err else {
+            panic!("expected decode error, got {err:?}");
+        };
+        assert_eq!(decode_err.path(), Some("data[1].subGrades[0].id"));
         let path_err = err.source().unwrap().to_string();
         assert!(
             path_err.starts_with("data[1].subGrades[0].id: invalid type: null, expected i64"),
             "unexpected path error: {path_err}"
         );
+
+        // 缺少外层字段时同样记录字段路径。
+        let missing_data = JsonResponse {
+            value: json!({"result": 0}),
+            context: response(200, "{}").context,
+        };
+        let err = data::<Vec<GradeItem>>(missing_data, "result")
+            .err()
+            .unwrap();
+        let Error::Decode(decode_err) = &err else {
+            panic!("expected decode error, got {err:?}");
+        };
+        assert_eq!(decode_err.path(), Some("data"));
+
+        // 顶层无路径错误即使底层消息含冒号与敏感字面量，path() 仍为 None；有字段路径时仅暴露路径名。
+        let root_scalar = deserialize_str::<i64>(r#""secret:token""#).unwrap_err();
+        let Error::Decode(root_decode) = &root_scalar else {
+            panic!("expected decode error, got {root_scalar:?}");
+        };
+        assert_eq!(root_decode.path(), None);
+        assert!(root_scalar.source().unwrap().to_string().contains(':'));
+
+        let field_with_secret = deserialize_str::<SubItem>(r#"{"id":"secret:token"}"#)
+            .err()
+            .unwrap();
+        let Error::Decode(field_decode) = &field_with_secret else {
+            panic!("expected decode error, got {field_with_secret:?}");
+        };
+        assert_eq!(field_decode.path(), Some("id"));
     }
 }

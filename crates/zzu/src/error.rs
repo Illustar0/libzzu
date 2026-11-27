@@ -161,6 +161,7 @@ impl<K> ErrorDetails<K> {
             kind,
             context: ErrorContext {
                 message: message.into(),
+                path: None,
                 request: None,
                 source: None,
             },
@@ -206,10 +207,22 @@ impl<K: fmt::Debug> StdError for ErrorDetails<K> {
     }
 }
 
+impl DecodeError {
+    /// 返回解析或校验失败对应的响应 JSON 字段路径（如 `"data.items[2].firstUsedTime"`）。
+    ///
+    /// 该路径仅包含字段名与数组下标，不含原始响应字面量，可安全用于日志与终端诊断；
+    /// 若错误发生在整段报文层级（如非法 JSON、HTML 解析失败或非 JSON 协议错误）则返回 `None`。
+    #[must_use]
+    pub fn path(&self) -> Option<&str> {
+        self.context.path.as_deref()
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("{message}{}", status_suffix(.request.as_deref()))]
 struct ErrorContext {
     message: String,
+    path: Option<String>,
     request: Option<Arc<RequestContext>>,
     #[source]
     source: Option<Box<dyn StdError + Send + Sync>>,
@@ -420,6 +433,10 @@ impl Error {
     pub(crate) fn map_message(mut self, f: impl FnOnce(&str) -> String) -> Self {
         let updated = f(&self.context().message);
         self.context_mut().message = updated;
+        self
+    }
+    pub(crate) fn with_path(mut self, path: impl Into<String>) -> Self {
+        self.context_mut().path = Some(path.into());
         self
     }
     pub(crate) fn with_request(mut self, context: Arc<RequestContext>) -> Self {
