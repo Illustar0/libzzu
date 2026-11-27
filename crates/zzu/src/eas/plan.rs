@@ -84,7 +84,7 @@ impl<'de> Deserialize<'de> for CompletionStatus {
 
 /// 培养方案内或计划外的单门课程修读进度。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", from = "WirePlanCourse")]
+#[serde(rename_all = "camelCase")]
 pub struct PlanCourse {
     /// 课程数字 ID。
     pub course_id: i64,
@@ -124,7 +124,7 @@ pub struct PlanCourse {
 
 /// 培养方案课程模块节点（支持多级子模块递归嵌套）。
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", from = "WirePlanModule")]
+#[serde(rename_all = "camelCase")]
 pub struct PlanModule {
     /// 模块类别（如必修课、限选课、院任选课、校任选课）。
     pub kind: NamedEntity,
@@ -192,15 +192,8 @@ impl ProgramCompletion {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum WirePlanCourse {
-    Upstream(UpstreamPlanCourse),
-    Canonical(CanonicalPlanCourse),
-}
-
-#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpstreamCourseRef {
+struct RawCourseRef {
     id: i64,
     #[serde(default, deserialize_with = "deserialize_null_default")]
     code: String,
@@ -216,8 +209,8 @@ struct UpstreamCourseRef {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpstreamPlanCourse {
-    course: UpstreamCourseRef,
+struct RawPlanCourse {
+    course: RawCourseRef,
     #[serde(default)]
     compulsory: bool,
     #[serde(default, deserialize_with = "deserialize_null_default")]
@@ -238,79 +231,27 @@ struct UpstreamPlanCourse {
     substitute_courses: Vec<NamedEntity>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CanonicalPlanCourse {
-    course_id: i64,
-    course_code: String,
-    course_name_zh: String,
-    #[serde(default)]
-    course_name_en: Option<String>,
-    #[serde(default)]
-    credits: Option<f64>,
-    #[serde(default)]
-    course_type: Option<NamedEntity>,
-    is_compulsory: bool,
-    #[serde(default)]
-    suggested_terms: Vec<u8>,
-    status: CompletionStatus,
-    #[serde(default)]
-    score: Option<String>,
-    #[serde(default)]
-    grade_point: Option<f64>,
-    #[serde(default)]
-    remark: Option<String>,
-    #[serde(default)]
-    substitute_courses: Vec<NamedEntity>,
-}
-
-impl From<WirePlanCourse> for PlanCourse {
-    fn from(wire: WirePlanCourse) -> Self {
-        match wire {
-            WirePlanCourse::Upstream(raw) => {
-                let status = resolve_status(raw.result_en, raw.result);
-                let score = trim_non_empty(raw.result_score)
-                    .or_else(|| raw.score.and_then(scalar_to_string));
-                Self {
-                    course_id: raw.course.id,
-                    course_code: raw.course.code.trim().to_owned(),
-                    course_name_zh: raw.course.name_zh.trim().to_owned(),
-                    course_name_en: trim_non_empty(raw.course.name_en),
-                    credits: raw.course.credits.filter(|value| value.is_finite()),
-                    course_type: raw.course.course_type,
-                    is_compulsory: raw.compulsory,
-                    suggested_terms: parse_terms(&raw.terms),
-                    status,
-                    score,
-                    grade_point: raw.gp.filter(|value| value.is_finite()),
-                    remark: trim_non_empty(raw.remark),
-                    substitute_courses: raw.substitute_courses,
-                }
-            }
-            WirePlanCourse::Canonical(canonical) => Self {
-                course_id: canonical.course_id,
-                course_code: canonical.course_code,
-                course_name_zh: canonical.course_name_zh,
-                course_name_en: trim_non_empty(canonical.course_name_en),
-                credits: canonical.credits.filter(|value| value.is_finite()),
-                course_type: canonical.course_type,
-                is_compulsory: canonical.is_compulsory,
-                suggested_terms: canonical.suggested_terms,
-                status: canonical.status,
-                score: trim_non_empty(canonical.score),
-                grade_point: canonical.grade_point.filter(|value| value.is_finite()),
-                remark: trim_non_empty(canonical.remark),
-                substitute_courses: canonical.substitute_courses,
-            },
+impl From<RawPlanCourse> for PlanCourse {
+    fn from(raw: RawPlanCourse) -> Self {
+        let status = resolve_status(raw.result_en, raw.result);
+        let score =
+            trim_non_empty(raw.result_score).or_else(|| raw.score.and_then(scalar_to_string));
+        Self {
+            course_id: raw.course.id,
+            course_code: raw.course.code.trim().to_owned(),
+            course_name_zh: raw.course.name_zh.trim().to_owned(),
+            course_name_en: trim_non_empty(raw.course.name_en),
+            credits: raw.course.credits.filter(|value| value.is_finite()),
+            course_type: raw.course.course_type,
+            is_compulsory: raw.compulsory,
+            suggested_terms: parse_terms(&raw.terms),
+            status,
+            score,
+            grade_point: raw.gp.filter(|value| value.is_finite()),
+            remark: trim_non_empty(raw.remark),
+            substitute_courses: raw.substitute_courses,
         }
     }
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum WirePlanModule {
-    Upstream(UpstreamPlanModule),
-    Canonical(CanonicalPlanModule),
 }
 
 #[derive(Default, Deserialize)]
@@ -325,7 +266,7 @@ struct RawModuleRequireInfo {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpstreamPlanModule {
+struct RawPlanModule {
     #[serde(rename = "type")]
     kind: NamedEntity,
     #[serde(default, deserialize_with = "deserialize_null_default")]
@@ -343,59 +284,25 @@ struct UpstreamPlanModule {
     #[serde(default)]
     remark: Option<String>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
-    children: Vec<PlanModule>,
+    children: Vec<Self>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
-    plan_courses: Vec<PlanCourse>,
+    plan_courses: Vec<RawPlanCourse>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CanonicalPlanModule {
-    kind: NamedEntity,
-    required_credits: f64,
-    required_course_count: u32,
-    required_sub_module_count: u32,
-    passed_credits: f64,
-    taking_credits: f64,
-    exempt_credits: f64,
-    status: CompletionStatus,
-    #[serde(default)]
-    remark: Option<String>,
-    #[serde(default)]
-    children: Vec<PlanModule>,
-    #[serde(default)]
-    courses: Vec<PlanCourse>,
-}
-
-impl From<WirePlanModule> for PlanModule {
-    fn from(wire: WirePlanModule) -> Self {
-        match wire {
-            WirePlanModule::Upstream(raw) => Self {
-                kind: raw.kind,
-                required_credits: finite_or_zero(raw.require_info.credits),
-                required_course_count: raw.require_info.course_num,
-                required_sub_module_count: raw.require_info.sub_module_num,
-                passed_credits: finite_or_zero(raw.passed_credits),
-                taking_credits: finite_or_zero(raw.taking),
-                exempt_credits: finite_or_zero(raw.skip),
-                status: resolve_status(raw.result_en, raw.result),
-                remark: trim_non_empty(raw.remark),
-                children: raw.children,
-                courses: raw.plan_courses,
-            },
-            WirePlanModule::Canonical(canonical) => Self {
-                kind: canonical.kind,
-                required_credits: finite_or_zero(canonical.required_credits),
-                required_course_count: canonical.required_course_count,
-                required_sub_module_count: canonical.required_sub_module_count,
-                passed_credits: finite_or_zero(canonical.passed_credits),
-                taking_credits: finite_or_zero(canonical.taking_credits),
-                exempt_credits: finite_or_zero(canonical.exempt_credits),
-                status: canonical.status,
-                remark: trim_non_empty(canonical.remark),
-                children: canonical.children,
-                courses: canonical.courses,
-            },
+impl From<RawPlanModule> for PlanModule {
+    fn from(raw: RawPlanModule) -> Self {
+        Self {
+            kind: raw.kind,
+            required_credits: finite_or_zero(raw.require_info.credits),
+            required_course_count: raw.require_info.course_num,
+            required_sub_module_count: raw.require_info.sub_module_num,
+            passed_credits: finite_or_zero(raw.passed_credits),
+            taking_credits: finite_or_zero(raw.taking),
+            exempt_credits: finite_or_zero(raw.skip),
+            status: resolve_status(raw.result_en, raw.result),
+            remark: trim_non_empty(raw.remark),
+            children: raw.children.into_iter().map(Self::from).collect(),
+            courses: raw.plan_courses.into_iter().map(PlanCourse::from).collect(),
         }
     }
 }
@@ -415,9 +322,9 @@ pub(super) struct RawCompletionInfo {
     #[serde(default, deserialize_with = "deserialize_null_default")]
     require_info: RawTopRequireInfo,
     #[serde(default, deserialize_with = "deserialize_null_default")]
-    modules: Vec<PlanModule>,
+    modules: Vec<RawPlanModule>,
     #[serde(default, deserialize_with = "deserialize_null_default")]
-    outplan_courses: Vec<PlanCourse>,
+    outplan_courses: Vec<RawPlanCourse>,
 }
 
 pub(super) fn build_program_completion(
@@ -428,8 +335,12 @@ pub(super) fn build_program_completion(
         cultivate_type,
         required_credits: finite_or_zero(raw.require_info.credits),
         required_module_count: raw.require_info.sub_module_num,
-        modules: raw.modules,
-        out_of_plan_courses: raw.outplan_courses,
+        modules: raw.modules.into_iter().map(PlanModule::from).collect(),
+        out_of_plan_courses: raw
+            .outplan_courses
+            .into_iter()
+            .map(PlanCourse::from)
+            .collect(),
     }
 }
 
@@ -585,5 +496,27 @@ mod tests {
         ] {
             assert_eq!(CompletionStatus::from(raw.to_owned()), expected);
         }
+
+        // 上游或规范 JSON 出现字段缺失/类型错误时，应保留具体的字段级错误而非 untagged 泛化报错。
+        let broken_upstream = json!({
+            "modules": [{
+                "type": {"id": 6, "code": "04", "nameZh": "必修课"},
+                "children": [{
+                    "planCourses": []
+                }]
+            }]
+        });
+        let err = serde_json::from_value::<RawCompletionInfo>(broken_upstream)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("missing field `type`"), "{err}");
+
+        let broken_canonical = json!({"courseCode": "CS101"});
+        let err = serde_json::from_value::<PlanCourse>(broken_canonical)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(err.contains("missing field `courseId`"), "{err}");
     }
 }
