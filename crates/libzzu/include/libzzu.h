@@ -10,12 +10,12 @@
 /**
  * C ABI 主版本号：出现破坏性变更时递增。
  */
-#define ZZU_ABI_VERSION_MAJOR 2
+#define ZZU_ABI_VERSION_MAJOR 3
 
 /**
  * C ABI 次版本号：新增方法或字段时递增，主版本号递增时归零。
  */
-#define ZZU_ABI_VERSION_MINOR 1
+#define ZZU_ABI_VERSION_MINOR 0
 
 /**
  * 本库分配的字节缓冲区不透明句柄，内容为 UTF-8 JSON（不含结尾 `NUL`），须通过 `zzu_buffer_free` 释放。
