@@ -521,7 +521,7 @@ fn parse_coremail_time(text: &str) -> Result<Zoned> {
     }
     DateTime::strptime("%Y-%m-%d %H:%M:%S", trimmed)
         .and_then(|datetime| datetime.in_tz("Asia/Shanghai"))
-        .map_err(|_| Error::decode_message(format!("无法解析邮件时间：{trimmed}")))
+        .map_err(|error| Error::decode_with_source(format!("无法解析邮件时间：{trimmed}"), error))
 }
 
 fn clean_summary(summary: Option<String>) -> Option<String> {
@@ -858,6 +858,18 @@ mod tests {
             parse_messages_response(expired, 1, 20).unwrap(),
             CoremailOutcome::SessionExpired(_)
         ));
+
+        let bad_received = messages_response(&json!({
+            "code": "S_OK",
+            "total": 1,
+            "var": [{
+                "id": "2:msg0003",
+                "receivedDate": "invalid-date"
+            }]
+        }));
+        let err = parse_messages_response(bad_received, 1, 20).err().unwrap();
+        assert!(err.is_decode());
+        assert!(std::error::Error::source(&err).is_some());
     }
 
     #[tokio::test]

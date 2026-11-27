@@ -46,7 +46,7 @@ pub(crate) fn jwt_expiration(token: &str) -> Result<i64> {
         URL_SAFE_NO_PAD
             .decode(part)
             .or_else(|_| URL_SAFE.decode(part))
-            .map_err(|_| Error::decode_message("JWT Base64URL 无效".into()))
+            .map_err(|error| Error::decode_with_source("JWT Base64URL 无效", error))
     };
     let _: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&decode(parts[0])?)?;
     let claims: Claims = serde_json::from_slice(&decode(parts[1])?)?;
@@ -73,10 +73,10 @@ pub(crate) fn sm2_encrypt(public_key: &str, plaintext: &[u8]) -> Result<String> 
         key_bytes.insert(0, 0x04);
     }
     let key = EncryptingKey::from_sec1_bytes(&key_bytes)
-        .map_err(|_| Error::crypto("SM2 公钥无效".into()))?;
+        .map_err(|error| Error::crypto_with_source("SM2 公钥无效", error))?;
     let encrypted = key
         .encrypt(&mut SysRng, plaintext)
-        .map_err(|_| Error::crypto("SM2 加密失败".into()))?;
+        .map_err(|error| Error::crypto_with_source("SM2 加密失败", error))?;
     // sm2 默认按 C1C3C2 输出且 C1 带未压缩前缀 `0x04`，服务端按 sm-crypto 约定省略该前缀。
     let wire = encrypted
         .strip_prefix(&[0x04])
@@ -92,7 +92,9 @@ pub(crate) fn random_sm4_key() -> String {
 }
 
 pub(crate) fn sm4_decrypt(data: &str, key: &str) -> Result<Vec<u8>> {
-    let ciphertext = STANDARD.decode(data).map_err(Error::crypto_source)?;
+    let ciphertext = STANDARD
+        .decode(data)
+        .map_err(|error| Error::crypto_with_source("SM4 密文 Base64 无效", error))?;
     let key: &[u8; 16] = key
         .as_bytes()
         .try_into()
@@ -136,6 +138,8 @@ mod tests {
         for token in ["", "a.b", "e30.e30.***", "W10.e30.c2ln"] {
             assert!(jwt_expiration(token).is_err());
         }
+        let bad_b64 = jwt_expiration("e30.e30.***").unwrap_err();
+        assert!(std::error::Error::source(&bad_b64).is_some());
     }
 
     #[test]
@@ -151,7 +155,8 @@ mod tests {
             assert_eq!(decrypting.decrypt(&sec1_cipher).unwrap(), plaintext);
         }
         assert!(sm2_encrypt("not hex", plaintext).is_err());
-        assert!(sm2_encrypt(&key_hex, b"").is_err());
+        let empty_err = sm2_encrypt(&key_hex, b"").unwrap_err();
+        assert!(std::error::Error::source(&empty_err).is_some());
     }
 
     #[test]
@@ -173,6 +178,8 @@ mod tests {
         );
         assert!(sm4_decrypt("", &key).is_err());
         assert!(sm4_decrypt("AA==", &key).is_err());
+        let b64_err = sm4_decrypt("***", &key).unwrap_err();
+        assert!(std::error::Error::source(&b64_err).is_some());
         assert!(sm4_decrypt("AA==", "short").is_err());
     }
 }

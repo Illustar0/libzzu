@@ -110,8 +110,8 @@ fn parse_discovered_portal(response: &http::Response) -> Result<(Url, IpAddr)> {
         })?
         .1
         .parse()
-        .map_err(|_| {
-            Error::decode_message("Portal 客户端 IP 无效".into())
+        .map_err(|error| {
+            Error::decode_with_source("Portal 客户端 IP 无效", error)
                 .with_request(response.context.clone())
         })?;
     let pre_auth_url = Url::parse(&portal_url.origin().ascii_serialization())
@@ -946,11 +946,23 @@ mod tests {
         let missing_ip = http::Response {
             headers: reqwest::header::HeaderMap::new(),
             url: "http://10.0.0.1/a79.htm".parse().unwrap(),
-            context: online_probe.context,
+            context: online_probe.context.clone(),
         };
         let err = parse_discovered_portal(&missing_ip).unwrap_err();
         assert!(err.is_decode());
         assert!(err.request().is_some());
+
+        let invalid_ip = http::Response {
+            headers: reqwest::header::HeaderMap::new(),
+            url: "http://10.0.0.1/a79.htm?wlanuserip=999.999.999.999"
+                .parse()
+                .unwrap(),
+            context: online_probe.context,
+        };
+        let err = parse_discovered_portal(&invalid_ip).unwrap_err();
+        assert!(err.is_decode());
+        assert!(err.request().is_some());
+        assert!(std::error::Error::source(&err).is_some());
     }
 
     #[test]

@@ -399,9 +399,24 @@ impl Error {
     }
 
     pub(crate) fn crypto_source(source: impl StdError + Send + Sync + 'static) -> Self {
-        Self::Crypto(
-            ErrorDetails::new(CryptoErrorKind::Unknown, "加密处理失败").with_source(source),
-        )
+        Self::crypto_with_source("加密处理失败", source)
+    }
+    pub(crate) fn crypto_with_source(
+        message: impl Into<String>,
+        source: impl StdError + Send + Sync + 'static,
+    ) -> Self {
+        Self::Crypto(ErrorDetails::new(CryptoErrorKind::Unknown, message).with_source(source))
+    }
+    pub(crate) fn decode_with_source(
+        message: impl Into<String>,
+        source: impl StdError + Send + Sync + 'static,
+    ) -> Self {
+        Self::Decode(ErrorDetails::new(DecodeErrorKind::Unknown, message).with_source(source))
+    }
+    pub(crate) fn map_message(mut self, f: impl FnOnce(&str) -> String) -> Self {
+        let updated = f(&self.context().message);
+        self.context_mut().message = updated;
+        self
     }
     pub(crate) fn with_request(mut self, context: Arc<RequestContext>) -> Self {
         self.context_mut().request = Some(context);

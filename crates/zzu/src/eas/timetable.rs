@@ -451,7 +451,9 @@ impl ClassSession {
     }
 
     fn validate_fields(&self) -> Result<()> {
-        validate_weekday(self.weekday)?;
+        if !(1..=7).contains(&self.weekday) {
+            return Err(Error::decode_message("星期序号必须在 1..=7 范围内".into()));
+        }
         if self.week_index == 0 {
             return Err(Error::decode_message("教学周序号必须大于 0".into()));
         }
@@ -1507,6 +1509,21 @@ fn normalize_schedule(
     raw: RawUpstreamSchedule,
     experiment_project: Option<ExperimentProject>,
 ) -> Result<ClassSession> {
+    let schedule_group_id = raw.schedule_group_id;
+    normalize_schedule_inner(class_id, raw, experiment_project).map_err(|error| {
+        error.map_message(|message| {
+            format!(
+                "排课场次解析失败（classId={class_id}, scheduleGroupId={schedule_group_id}）：{message}"
+            )
+        })
+    })
+}
+
+fn normalize_schedule_inner(
+    class_id: i64,
+    raw: RawUpstreamSchedule,
+    experiment_project: Option<ExperimentProject>,
+) -> Result<ClassSession> {
     let start_time =
         resolve_effective_time(raw.date, &raw.start_time, raw.real_start_time.as_ref())?;
     let end_time = resolve_effective_time(raw.date, &raw.end_time, raw.real_end_time.as_ref())?;
@@ -1963,5 +1980,32 @@ mod tests {
             }]
         });
         assert!(serde_json::from_value::<Timetable>(broken).is_err());
+
+        let bad_schedule: Vec<RawCourseTableEntry> = serde_json::from_value(json!([{
+            "id": 476_767,
+            "code": "222302-013",
+            "bizTypeId": 2,
+            "course": {
+                "id": 4171, "code": "222302", "nameZh": "大学物理B",
+                "periodInfo": {"total": 64}
+            },
+            "schedules": [{
+                "scheduleGroupId": 777_888,
+                "date": "2026-09-07",
+                "weekday": 9,
+                "startTime": 800,
+                "endTime": 940,
+                "startUnit": 1,
+                "endUnit": 2,
+                "weekIndex": 1
+            }]
+        }]))
+        .unwrap();
+        let err = build_timetable(sample_semester(), bad_schedule, sample_unit_layouts())
+            .err()
+            .unwrap();
+        assert!(err.is_decode());
+        assert!(err.message().contains("classId=476767"));
+        assert!(err.message().contains("scheduleGroupId=777888"));
     }
 }

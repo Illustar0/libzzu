@@ -182,18 +182,21 @@ pub(super) fn parse_wall_time(value: &Value) -> Result<Time> {
         }
     };
     if text.contains(':') {
-        return text.parse::<Time>().map_err(Error::decode);
+        return text
+            .parse::<Time>()
+            .map_err(|error| Error::decode_with_source("时间格式无效", error));
     }
     if text.is_empty() || text.len() > 4 || !text.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(Error::decode_message("时间必须为 HHMM".into()));
     }
     let hhmm: u32 = text
         .parse()
-        .map_err(|_| Error::decode_message("时间格式无效".into()))?;
-    let hour = i8::try_from(hhmm / 100).map_err(|_| Error::decode_message("小时值无效".into()))?;
+        .map_err(|error| Error::decode_with_source("时间格式无效", error))?;
+    let hour =
+        i8::try_from(hhmm / 100).map_err(|error| Error::decode_with_source("小时值无效", error))?;
     let minute =
-        i8::try_from(hhmm % 100).map_err(|_| Error::decode_message("分钟值无效".into()))?;
-    Time::new(hour, minute, 0, 0).map_err(Error::decode)
+        i8::try_from(hhmm % 100).map_err(|error| Error::decode_with_source("分钟值无效", error))?;
+    Time::new(hour, minute, 0, 0).map_err(|error| Error::decode_with_source("墙钟时间无效", error))
 }
 
 /// 将上游 `HHMM`（数字或字符串）或已编码的 RFC 9557 时间字符串解析为 `Asia/Shanghai` 时区的 [`Zoned`]。

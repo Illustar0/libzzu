@@ -197,7 +197,7 @@ fn parse_authx_time(text: &str, field: &str) -> Result<Zoned> {
     trimmed
         .parse::<Timestamp>()
         .and_then(|timestamp| timestamp.in_tz("Asia/Shanghai"))
-        .map_err(|_| Error::decode_message(format!("设备时间字段 {field} 格式无效")))
+        .map_err(|error| Error::decode_with_source(format!("设备时间字段 {field} 格式无效"), error))
 }
 
 #[cfg(test)]
@@ -342,6 +342,24 @@ mod tests {
         let error = parse_devices_response(invalid_item, 1, 20).unwrap_err();
         assert!(error.is_decode());
         assert!(error.request().is_some());
+
+        let invalid_time = authx_devices_response(json!({
+            "acknowleged": true,
+            "code": 0,
+            "data": {
+                "pageCount": 1,
+                "recordCount": 1,
+                "items": [{
+                    "id": "rec-1",
+                    "agentId": "dev-1",
+                    "firstUsedTime": "not-a-timestamp",
+                    "lastUsedTime": "2026-11-26T22:00:00.000+08:00"
+                }]
+            }
+        }));
+        let error = parse_devices_response(invalid_time, 1, 20).unwrap_err();
+        assert!(error.is_decode());
+        assert!(std::error::Error::source(&error).is_some());
     }
 
     #[tokio::test]

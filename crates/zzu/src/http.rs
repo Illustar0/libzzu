@@ -370,8 +370,9 @@ fn scalar_error_code(value: &Value, key: &str) -> Option<String> {
 }
 
 pub(crate) fn parse_money(value: &Value, field: &str) -> Result<crate::Decimal> {
-    crate::money::deserialize_decimal(value)
-        .map_err(|_| Error::decode_message(format!("{field} 必须是可精确表示的十进制金额")))
+    crate::money::deserialize_decimal(value).map_err(|error| {
+        Error::decode_with_source(format!("{field} 必须是可精确表示的十进制金额"), error)
+    })
 }
 
 pub(crate) fn parse_number(value: &Value, field: &str) -> Result<f64> {
