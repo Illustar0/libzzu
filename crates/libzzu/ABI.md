@@ -273,8 +273,8 @@ zzu_runtime_free(runtime);
 | `prepare_sms` | 无 | `{"securePhone": string \| null}` | 初始化短信 MFA 会话并返回脱敏手机号，不发送短信。未探测 MFA 时会先自动探测；同一轮验证内重复调用直接返回缓存结果。无需 MFA 或不支持短信时返回 `invalid_mfa_state`；收到服务端拒绝或无效响应时自动清空 MFA 状态 |
 | `send_sms` | 无 | `{"securePhone": string \| null}` | 向绑定安全手机发送短信验证码并返回脱敏手机号。未探测或未初始化时会自动完成 `prepare_sms`；无需 MFA 或不支持短信时返回 `invalid_mfa_state`。发送失败时会保留当前 MFA 会话，避免作废已发验证码；若状态已过期，可调用 `detect_mfa` 重置 |
 | `verify_sms` | `code: string` | `null` | 提交非空短信验证码完成校验，通过后须再次调用 `login`。未先调用 `send_sms` 时返回 `invalid_mfa_state`；验证码错误返回 `mfa_verification_failed`，并保留当前会话供直接重试；服务端返回非 2xx 或业务失败时自动清空 MFA 状态 |
-| `set_device_trust` | `deviceId: string`、`isTrusted: boolean` | `null` | 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）（需已登录，`deviceId` 不得为空）。`true` 表示信任，`false` 表示取消信任 |
-| `devices` | `page?: uint32`、`pageSize?: uint32` | `DevicePage` | 分页查询当前账号下的历史登录设备与信任状态列表（需已登录）。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `20`；`page == 0` 或 `pageSize == 0` 返回 `ZZU_INVALID_INPUT`。返回条目的 `deviceId` 可传给 `set_device_trust` 更新信任状态 |
+| `set_device_trust` | `deviceId: string`、`isTrusted: boolean` | `null` | 更新当前账号下指定设备的信任状态（受信任设备登录时无须 MFA）（需已登录，`deviceId` 不得为空或纯空白字符）。`true` 表示信任，`false` 表示取消信任 |
+| `devices` | `page?: uint32`、`pageSize?: uint32` | `DevicePage` | 分页查询当前账号下的历史登录设备与信任状态列表（需已登录）。`page` 从 `1` 开始（默认 `1`），`pageSize` 默认 `20`；`page == 0` 或 `pageSize == 0` 返回 `ZZU_INVALID_INPUT`。桌面或手机浏览器网页登录记录的 `deviceId` 为 `null`；非空的 `deviceId` 可传给 `set_device_trust` 更新信任状态 |
 | `user_info` | 无 | `PersonalInfo` | 查询个人身份信息（需已登录） |
 | `portrait` | 无 | `Portrait \| null` | 查询个人中心头像图像（需已登录）；当前账号未设置头像时返回 `null` |
 | `service_sso_url` | `service: Service` | `string` | 获取指定业务系统的单点登录跳转 URL（需已登录；返回的 URL 携带登录票据或用户令牌，不得写入日志） |
@@ -300,7 +300,7 @@ zzu_runtime_free(runtime);
 `DevicePage`、`LoginDevice` 与 `Portrait` 结构：
 
 - **`DevicePage`**：`{"items": LoginDevice[], "page": uint32, "pageSize": uint32, "totalItems": uint32, "totalPages": uint32}`。
-- **`LoginDevice`**：`{"id": string, "deviceId": string, "isTrusted": boolean, "deviceType": string | null, "os": string | null, "browser": string | null, "userAgent": string | null, "usedCount": uint32, "firstUsedTime": string, "lastUsedTime": string, "previousUsedTime": string | null}`。其中各时间字段均为 `Asia/Shanghai` 时区的 RFC 9557 字符串，`deviceId` 与创建客户端时的 `deviceId` 及 `set_device_trust` 的入参对应。
+- **`LoginDevice`**：`{"id": string, "deviceId": string | null, "isTrusted": boolean, "deviceType": string | null, "os": string | null, "browser": string | null, "userAgent": string | null, "usedCount": uint32, "firstUsedTime": string | null, "lastUsedTime": string | null, "previousUsedTime": string | null}`。其中非空时间字段均为 `Asia/Shanghai` 时区的 RFC 9557 字符串；桌面或手机浏览器网页登录记录的 `deviceId` 为 `null`，非空 `deviceId` 与创建客户端时的 `deviceId` 及 `set_device_trust` 的入参对应。
 - **`Portrait`**：`{"mediaType": string, "data": string}`。其中 `mediaType` 为小写的图像 MIME 类型（如 `"image/png"`、`"image/jpeg"`），`data` 为图像原始字节的标准 Base64（RFC 4648）编码字符串。
 
 ### `ZzuEasClient`（本科教务）

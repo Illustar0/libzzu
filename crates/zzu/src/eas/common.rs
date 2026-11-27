@@ -212,16 +212,7 @@ pub(super) fn parse_time(date: Date, value: &Value) -> Result<Zoned> {
         .map_err(Error::decode)
 }
 
-/// 将 JSON `null` 反序列化为 `T::default()`，避免上游空值字段导致解码中断。
-pub(super) fn deserialize_null_default<'de, D, T>(
-    deserializer: D,
-) -> std::result::Result<T, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Default + Deserialize<'de>,
-{
-    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
-}
+pub(super) use crate::http::deserialize_null_default;
 
 /// 去除首尾空白并在为空字符串时归一化为 `None`。
 pub(super) fn trim_non_empty(text: Option<String>) -> Option<String> {

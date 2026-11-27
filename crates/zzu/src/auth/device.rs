@@ -27,40 +27,48 @@ pub struct DevicePage {
     pub total_pages: u32,
 }
 
-/// 账号下曾登录过的单台终端设备及信任状态记录。
+/// 账号下曾登录过的单条终端设备或网页会话及信任状态记录。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginDevice {
     /// 个人安全中心设备记录唯一标识。
     pub id: String,
-    /// 设备标识（与 [`CasClient::device_id`] 及 [`CasClient::set_device_trust`] 的 `device_id` 一致）。
-    pub device_id: String,
+    /// 客户端设备标识（与 [`CasClient::device_id`] 及 [`CasClient::set_device_trust`] 的 `device_id` 一致；网页端登录记录无此标识，为 `None`）。
+    #[serde(default)]
+    pub device_id: Option<String>,
     /// 该设备是否已设为受信任设备（受信任设备登录时无须多因素认证）。
     pub is_trusted: bool,
     /// 终端设备形态类别（如 `"PC"`、`"MOBILE"`）。
+    #[serde(default)]
     pub device_type: Option<String>,
     /// 操作系统标识（如 `"MAC_OS_X"`、`"ANDROID"`）。
+    #[serde(default)]
     pub os: Option<String>,
     /// 浏览器或客户端标识。
+    #[serde(default)]
     pub browser: Option<String>,
     /// 完整的客户端 `User-Agent` 字符串。
+    #[serde(default)]
     pub user_agent: Option<String>,
     /// 累计登录次数。
     pub used_count: u32,
-    /// 首次登录时间（`Asia/Shanghai` 时区）。
-    pub first_used_time: Zoned,
-    /// 最近一次登录时间（`Asia/Shanghai` 时区）。
-    pub last_used_time: Zoned,
+    /// 首次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
+    #[serde(default)]
+    pub first_used_time: Option<Zoned>,
+    /// 最近一次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
+    #[serde(default)]
+    pub last_used_time: Option<Zoned>,
     /// 上一次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
+    #[serde(default)]
     pub previous_used_time: Option<Zoned>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawDevicePage {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "http::deserialize_null_default")]
     page_count: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "http::deserialize_null_default")]
     record_count: u32,
     #[serde(default)]
     items: Option<Vec<RawLoginDevice>>,
@@ -69,9 +77,11 @@ struct RawDevicePage {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawLoginDevice {
-    id: String,
-    agent_id: String,
     #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default, deserialize_with = "http::deserialize_null_default")]
     agent_trust: bool,
     #[serde(default)]
     machine_type: Option<String>,
@@ -83,10 +93,12 @@ struct RawLoginDevice {
     browser: Option<String>,
     #[serde(default)]
     user_agent: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "http::deserialize_null_default")]
     used_count: u32,
-    first_used_time: String,
-    last_used_time: String,
+    #[serde(default)]
+    first_used_time: Option<String>,
+    #[serde(default)]
+    last_used_time: Option<String>,
     #[serde(default)]
     prev_used_time: Option<String>,
 }
@@ -96,7 +108,8 @@ impl CasClient {
     ///
     /// `page` 从 `1` 开始（内部自动换算为上游从 `0` 起算的 `pageIndex`）；
     /// `page_size` 为 `None` 时使用 [`DEFAULT_DEVICE_PAGE_SIZE`]（`20`）。
-    /// 返回条目的 [`LoginDevice::device_id`] 可直接传给 [`Self::set_device_trust`] 更新信任状态。
+    /// 桌面或手机浏览器网页端登录记录的 [`LoginDevice::device_id`] 为 `None`；
+    /// 含非空 [`LoginDevice::device_id`] 的条目可传给 [`Self::set_device_trust`] 更新信任状态。
     ///
     /// # Errors
     ///
@@ -139,10 +152,13 @@ fn parse_devices_response(
     }
     let context = response.context.clone();
     let raw: RawDevicePage = http::data(response, "code")?;
-    let mut items = Vec::new();
-    for item in raw.items.unwrap_or_default() {
-        items
-            .push(convert_login_device(item).map_err(|error| error.with_request(context.clone()))?);
+    let raw_items = raw.items.unwrap_or_default();
+    let mut items = Vec::with_capacity(raw_items.len());
+    for (index, item) in raw_items.into_iter().enumerate() {
+        items.push(
+            convert_login_device(index, item)
+                .map_err(|error| error.with_request(context.clone()))?,
+        );
     }
     Ok(DevicePage {
         items,
@@ -153,23 +169,19 @@ fn parse_devices_response(
     })
 }
 
-fn convert_login_device(raw: RawLoginDevice) -> Result<LoginDevice> {
-    let device_id = raw.agent_id.trim().to_owned();
-    if device_id.is_empty() {
-        return Err(Error::decode_message(
-            "登录设备记录缺少有效的 agentId".into(),
-        ));
-    }
+fn convert_login_device(index: usize, raw: RawLoginDevice) -> Result<LoginDevice> {
+    let id = clean_optional_text(raw.id).ok_or_else(|| {
+        Error::decode_message("登录设备记录缺少有效的 id".into())
+            .with_path(format!("data.items[{index}].id"))
+    })?;
+    let device_id = clean_optional_text(raw.agent_id);
     let device_type =
         clean_optional_text(raw.machine_type).or_else(|| clean_optional_text(raw.agent_type));
-    let first_used_time = parse_authx_time(&raw.first_used_time, "firstUsedTime")?;
-    let last_used_time = parse_authx_time(&raw.last_used_time, "lastUsedTime")?;
-    let previous_used_time = clean_optional_text(raw.prev_used_time)
-        .as_deref()
-        .map(|text| parse_authx_time(text, "prevUsedTime"))
-        .transpose()?;
+    let first_used_time = parse_optional_authx_time(raw.first_used_time, index, "firstUsedTime")?;
+    let last_used_time = parse_optional_authx_time(raw.last_used_time, index, "lastUsedTime")?;
+    let previous_used_time = parse_optional_authx_time(raw.prev_used_time, index, "prevUsedTime")?;
     Ok(LoginDevice {
-        id: raw.id,
+        id,
         device_id,
         is_trusted: raw.agent_trust,
         device_type,
@@ -187,6 +199,20 @@ fn clean_optional_text(value: Option<String>) -> Option<String> {
     value
         .map(|text| text.trim().to_owned())
         .filter(|text| !text.is_empty())
+}
+
+fn parse_optional_authx_time(
+    value: Option<String>,
+    index: usize,
+    field: &str,
+) -> Result<Option<Zoned>> {
+    clean_optional_text(value)
+        .as_deref()
+        .map(|text| {
+            parse_authx_time(text, field)
+                .map_err(|error| error.with_path(format!("data.items[{index}].{field}")))
+        })
+        .transpose()
 }
 
 fn parse_authx_time(text: &str, field: &str) -> Result<Zoned> {
@@ -290,16 +316,21 @@ mod tests {
         assert_eq!(page.total_pages, 18);
         assert_eq!(page.items.len(), 2);
 
-        assert_eq!(page.items[0].device_id, "dev-1");
+        assert_eq!(page.items[0].device_id.as_deref(), Some("dev-1"));
         assert!(page.items[0].is_trusted);
         assert_eq!(page.items[0].device_type.as_deref(), Some("PC"));
         assert_eq!(
-            page.items[0].first_used_time.to_string(),
-            "2026-02-12T10:08:44+08:00[Asia/Shanghai]"
+            page.items[0]
+                .first_used_time
+                .as_ref()
+                .map(ToString::to_string)
+                .as_deref(),
+            Some("2026-02-12T10:08:44+08:00[Asia/Shanghai]")
         );
+        assert!(page.items[0].last_used_time.is_some());
         assert!(page.items[0].previous_used_time.is_some());
 
-        assert_eq!(page.items[1].device_id, "zzu-tour");
+        assert_eq!(page.items[1].device_id.as_deref(), Some("zzu-tour"));
         assert!(!page.items[1].is_trusted);
         assert_eq!(page.items[1].device_type.as_deref(), Some("MOBILE"));
         assert_eq!(page.items[1].os, None);
@@ -314,7 +345,85 @@ mod tests {
     }
 
     #[test]
-    fn parse_devices_surfaces_remote_and_decode_errors_with_context() {
+    fn parse_devices_tolerates_web_sessions_and_explicit_null_scalars() {
+        let response = authx_devices_response(json!({
+            "acknowleged": true,
+            "code": 0,
+            "data": {
+                "pageCount": 1,
+                "recordCount": 2,
+                "items": [
+                    {
+                        "id": "web-empty",
+                        "agentId": "  ",
+                        "agentTrust": false,
+                        "agentType": "PC",
+                        "firstUsedTime": "2026-11-26T22:00:00.000+08:00",
+                        "lastUsedTime": "2026-11-26T22:00:00.000+08:00"
+                    },
+                    {
+                        "id": "web-null",
+                        "agentId": null,
+                        "agentTrust": null,
+                        "agentType": null,
+                        "machineType": null,
+                        "os": "OTHER",
+                        "browser": "UNKNOWN",
+                        "userAgent": null,
+                        "usedCount": null,
+                        "firstUsedTime": null,
+                        "lastUsedTime": "   ",
+                        "prevUsedTime": null
+                    }
+                ]
+            }
+        }));
+
+        let page = parse_devices_response(response, 1, 20).unwrap();
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].device_id, None);
+        assert_eq!(page.items[0].device_type.as_deref(), Some("PC"));
+
+        assert_eq!(page.items[1].device_id, None);
+        assert!(!page.items[1].is_trusted);
+        assert_eq!(page.items[1].used_count, 0);
+        assert_eq!(page.items[1].os.as_deref(), Some("OTHER"));
+        assert_eq!(page.items[1].browser.as_deref(), Some("UNKNOWN"));
+        assert_eq!(page.items[1].first_used_time, None);
+        assert_eq!(page.items[1].last_used_time, None);
+
+        let serialized = serde_json::to_value(&page).unwrap();
+        assert!(serialized["items"][0]["deviceId"].is_null());
+        assert!(serialized["items"][1]["firstUsedTime"].is_null());
+        assert!(serialized["items"][1]["lastUsedTime"].is_null());
+        assert_eq!(
+            serde_json::from_value::<DevicePage>(serialized).unwrap(),
+            page
+        );
+
+        let null_counts = authx_devices_response(json!({
+            "acknowleged": true,
+            "code": 0,
+            "data": {
+                "pageCount": null,
+                "recordCount": null,
+                "items": null
+            }
+        }));
+        assert_eq!(
+            parse_devices_response(null_counts, 1, 20).unwrap(),
+            DevicePage {
+                items: Vec::new(),
+                page: 1,
+                page_size: 20,
+                total_items: 0,
+                total_pages: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_devices_surfaces_remote_and_decode_errors_with_context_and_path() {
         let unacknowledged = authx_devices_response(json!({
             "acknowleged": false,
             "code": 0,
@@ -325,45 +434,57 @@ mod tests {
         assert_eq!(error.message(), "查询受限");
         assert!(error.request().is_some());
 
-        let invalid_item = authx_devices_response(json!({
+        let missing_id = authx_devices_response(json!({
             "acknowleged": true,
             "code": 0,
             "data": {
                 "pageCount": 1,
                 "recordCount": 1,
                 "items": [{
-                    "id": "rec-1",
-                    "agentId": "   ",
-                    "firstUsedTime": "2026-11-26T22:00:00.000+08:00",
-                    "lastUsedTime": "2026-11-26T22:00:00.000+08:00"
+                    "id": "   ",
+                    "agentId": null,
+                    "firstUsedTime": null,
+                    "lastUsedTime": null
                 }]
             }
         }));
-        let error = parse_devices_response(invalid_item, 1, 20).unwrap_err();
-        assert!(error.is_decode());
+        let error = parse_devices_response(missing_id, 1, 20).unwrap_err();
         assert!(error.request().is_some());
+        let Error::Decode(decode_error) = &error else {
+            panic!("expected decode error, got {error:?}");
+        };
+        assert_eq!(decode_error.path(), Some("data.items[0].id"));
 
         let invalid_time = authx_devices_response(json!({
             "acknowleged": true,
             "code": 0,
             "data": {
                 "pageCount": 1,
-                "recordCount": 1,
-                "items": [{
-                    "id": "rec-1",
-                    "agentId": "dev-1",
-                    "firstUsedTime": "not-a-timestamp",
-                    "lastUsedTime": "2026-11-26T22:00:00.000+08:00"
-                }]
+                "recordCount": 2,
+                "items": [
+                    {
+                        "id": "rec-1",
+                        "agentId": null
+                    },
+                    {
+                        "id": "rec-2",
+                        "agentId": "dev-2",
+                        "firstUsedTime": "2026-11-26T22:00:00.000+08:00",
+                        "lastUsedTime": "not-a-timestamp"
+                    }
+                ]
             }
         }));
         let error = parse_devices_response(invalid_time, 1, 20).unwrap_err();
-        assert!(error.is_decode());
         assert!(std::error::Error::source(&error).is_some());
+        let Error::Decode(decode_error) = &error else {
+            panic!("expected decode error, got {error:?}");
+        };
+        assert_eq!(decode_error.path(), Some("data.items[1].lastUsedTime"));
     }
 
     #[tokio::test]
-    async fn devices_checks_pagination_before_authentication() {
+    async fn devices_and_trust_validate_inputs_before_authentication() {
         let cas = CasClient::new("", "", "test-device").unwrap();
         assert!(cas.devices(0, None).await.unwrap_err().is_invalid_input());
         assert!(
@@ -371,6 +492,18 @@ mod tests {
                 .await
                 .unwrap_err()
                 .is_not_authenticated()
+        );
+        assert!(
+            cas.set_device_trust("", true)
+                .await
+                .unwrap_err()
+                .is_invalid_input()
+        );
+        assert!(
+            cas.set_device_trust("   ", true)
+                .await
+                .unwrap_err()
+                .is_invalid_input()
         );
     }
 }

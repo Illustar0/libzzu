@@ -681,10 +681,11 @@ impl CasClient {
     /// `is_trusted` 为 `true` 时信任设备，为 `false` 时取消信任。
     ///
     /// # Errors
-    /// - `device_id` 为空时返回 [`Error::InvalidInput`]。
+    /// - `device_id` 为空或仅含空白字符时返回 [`Error::InvalidInput`]。
     /// - 客户端尚未登录或令牌不可用时返回 [`Error::Authentication`]。
     /// - 请求失败、服务端拒绝更新或响应格式不符时返回错误。
     pub async fn set_device_trust(&self, device_id: &str, is_trusted: bool) -> Result<()> {
+        let device_id = device_id.trim();
         if device_id.is_empty() {
             return Err(Error::invalid_input("设备标识不能为空".into()));
         }

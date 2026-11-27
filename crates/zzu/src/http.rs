@@ -4,7 +4,7 @@ use reqwest::{
     Certificate, Client, ClientBuilder, RequestBuilder, StatusCode, Url, header::HeaderMap,
     redirect::Policy,
 };
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::{Error, RequestContext, Result};
@@ -405,6 +405,17 @@ fn into_path_error(
         source: err.into_inner(),
     };
     Error::decode(source).with_path(path)
+}
+
+/// 将显式 JSON `null` 反序列化为 `T::default()`，避免上游空值标量字段中断整段解码。
+pub(crate) fn deserialize_null_default<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 pub(crate) fn message(value: &Value) -> String {
