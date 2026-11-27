@@ -585,7 +585,7 @@ mod tests {
     use std::sync::Arc;
 
     use base64::{Engine, engine::general_purpose::STANDARD};
-    use ecb::cipher::{BlockEncryptMut, KeyInit, block_padding::Pkcs7};
+    use ecb::cipher::{BlockModeEncrypt, KeyInit, block_padding::Pkcs7};
 
     use super::*;
     use crate::RequestContext;
@@ -607,7 +607,7 @@ mod tests {
         let key_bytes: &[u8; 16] = sm4_key.as_bytes().try_into().unwrap();
         let plaintext = serde_json::to_vec(payload).unwrap();
         let ciphertext = ecb::Encryptor::<sm4::Sm4>::new(key_bytes.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(&plaintext);
+            .encrypt_padded_vec::<Pkcs7>(&plaintext);
         json!({"data": STANDARD.encode(ciphertext)})
     }
 

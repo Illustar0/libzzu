@@ -2,7 +2,7 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
 };
-use ecb::cipher::{BlockDecryptMut, KeyInit, block_padding::Pkcs7};
+use ecb::cipher::{BlockModeDecrypt, KeyInit, block_padding::Pkcs7};
 use rand::Rng;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey};
 use serde::Deserialize;
@@ -100,14 +100,14 @@ pub(crate) fn sm4_decrypt(data: &str, key: &str) -> Result<Vec<u8>> {
         .try_into()
         .map_err(|_| Error::crypto("SM4 密钥必须为 16 字节".into()))?;
     ecb::Decryptor::<sm4::Sm4>::new(key.into())
-        .decrypt_padded_vec_mut::<Pkcs7>(&ciphertext)
+        .decrypt_padded_vec::<Pkcs7>(&ciphertext)
         .map_err(|_| Error::crypto("SM4 密文或 PKCS#7 填充无效".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ecb::cipher::BlockEncryptMut;
+    use ecb::cipher::BlockModeEncrypt;
     use sm2::{
         NonZeroScalar,
         elliptic_curve::Generate,
@@ -171,7 +171,7 @@ mod tests {
         let plaintext = br#"{"success":true}"#;
         let key_bytes: &[u8; 16] = key.as_bytes().try_into().unwrap();
         let ciphertext = ecb::Encryptor::<sm4::Sm4>::new(key_bytes.into())
-            .encrypt_padded_vec_mut::<Pkcs7>(plaintext);
+            .encrypt_padded_vec::<Pkcs7>(plaintext);
         assert_eq!(
             sm4_decrypt(&STANDARD.encode(ciphertext), &key).unwrap(),
             plaintext
