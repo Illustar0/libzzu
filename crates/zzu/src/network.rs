@@ -24,7 +24,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::{Error, Result, http, http::TrustRoots};
 
 /// 自动探测得到的校园网 Portal 地址与客户端 IP 信息。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PortalInfo {
     /// Portal 认证页面根地址（用于静态脚本与门户资源）。
@@ -208,7 +208,7 @@ pub struct IspInfo {
 }
 
 /// Portal 认证与下线请求参数的编码方式。
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PortalEncryption {
     /// 明文参数传输（登录密码做标准 Base64 编码）。
@@ -219,16 +219,35 @@ pub enum PortalEncryption {
 }
 
 /// Portal 认证或下线接口返回的 JSONP 结果。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthResult {
     /// 服务端结果码（`1` 表示操作成功）。
     pub result: i64,
     /// 服务端返回的状态说明消息。
-    #[serde(rename = "msg")]
     pub message: String,
     /// 操作失败或特殊状态时附带的可选细分返回码。
-    #[serde(rename = "retCode", alias = "ret_code", default)]
+    #[serde(default)]
     pub ret_code: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct RawAuthResult {
+    result: i64,
+    #[serde(rename = "msg")]
+    message: String,
+    #[serde(rename = "retCode", alias = "ret_code", default)]
+    ret_code: Option<i64>,
+}
+
+impl From<RawAuthResult> for AuthResult {
+    fn from(raw: RawAuthResult) -> Self {
+        Self {
+            result: raw.result,
+            message: raw.message,
+            ret_code: raw.ret_code,
+        }
+    }
 }
 
 impl AuthResult {
@@ -240,7 +259,7 @@ impl AuthResult {
 }
 
 /// Portal 登录请求的本地源地址选择方式。
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PortalSourceAddress {
     /// 将 `user_ip` 绑定为套接字源地址（终端直接接入校园网，`user_ip` 是本机网卡地址）。
@@ -344,7 +363,7 @@ impl PortalClient {
             js_version: encode("4.2.2")?,
             terminal_type: encode("3")?,
             lang: encode("zh-cn")?,
-            encrypt: matches!(encryption, PortalEncryption::Xor).then_some("1"),
+            encrypt: (encryption == PortalEncryption::Xor).then_some("1"),
             v: rand::thread_rng().gen_range(500..=10499),
         };
         self.send_portal_jsonp("/eportal/portal/login", &query)
@@ -377,7 +396,7 @@ impl PortalClient {
             wlan_ac_name: "",
             js_version: encode("4.2.2")?,
             lang: encode("zh-cn")?,
-            encrypt: matches!(encryption, PortalEncryption::Xor).then_some("1"),
+            encrypt: (encryption == PortalEncryption::Xor).then_some("1"),
             v: rand::thread_rng().gen_range(500..=10499),
         };
         self.send_portal_jsonp("/eportal/portal/logout", &query)
@@ -391,7 +410,9 @@ impl PortalClient {
             .map_err(|error| Error::invalid_input(error.to_string()))?;
         let request = self.http.get(url).query(query).query(&[("lang", "zh")]);
         let response = http::send(request).await?.require_success()?;
-        parse_jsonp(response.body()).map_err(|error| error.with_request(response.context))
+        let raw: RawAuthResult =
+            parse_jsonp(response.body()).map_err(|error| error.with_request(response.context))?;
+        Ok(raw.into())
     }
 
     /// 查询当前校园网 Portal 页面提供的运营商列表及其登录账号后缀。
@@ -894,10 +915,42 @@ mod tests {
 
     #[test]
     fn portal_parsers_handle_real_protocol_shapes() {
-        let response: AuthResult =
+        let raw_auth: RawAuthResult =
             parse_jsonp(" dr1003(\n{\"result\":1,\"msg\":\"成功 (ok)\"}\n); ").unwrap();
+        let response = AuthResult::from(raw_auth);
         assert!(response.is_success());
-        assert!(parse_jsonp::<AuthResult>("alert(1);dr1003({})").is_err());
+        let encoded_auth = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            encoded_auth,
+            serde_json::json!({
+                "result": 1,
+                "message": "成功 (ok)",
+                "retCode": null,
+            })
+        );
+        let restored_auth: AuthResult = serde_json::from_value(encoded_auth).unwrap();
+        assert_eq!(restored_auth, response);
+        assert!(
+            serde_json::from_value::<AuthResult>(serde_json::json!({
+                "result": 1,
+                "msg": "legacy",
+            }))
+            .is_err()
+        );
+        assert!(parse_jsonp::<RawAuthResult>("alert(1);dr1003({})").is_err());
+
+        let encoded_enc = serde_json::to_value(PortalEncryption::Xor).unwrap();
+        assert_eq!(encoded_enc, serde_json::json!("xor"));
+        assert_eq!(
+            serde_json::from_value::<PortalEncryption>(encoded_enc).unwrap(),
+            PortalEncryption::Xor
+        );
+        let encoded_src = serde_json::to_value(PortalSourceAddress::System).unwrap();
+        assert_eq!(encoded_src, serde_json::json!("system"));
+        assert_eq!(
+            serde_json::from_value::<PortalSourceAddress>(encoded_src).unwrap(),
+            PortalSourceAddress::System
+        );
         let base = Url::parse("http://10.0.0.1/").unwrap();
         assert_eq!(
             portal_server_url(&base, Some("var enableHttps = 0; var epHTTPPort=8801;"))
@@ -927,7 +980,10 @@ mod tests {
             .unwrap(),
             "a&b"
         );
+    }
 
+    #[test]
+    fn portal_discovery_reports_online_and_decode_failures() {
         let online_probe = http::Response {
             headers: reqwest::header::HeaderMap::new(),
             url: "https://www.bilibili.com/".parse().unwrap(),

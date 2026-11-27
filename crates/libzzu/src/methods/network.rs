@@ -68,20 +68,17 @@ struct PortalLogout {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PortalAuth {
+struct PortalAuth<'a> {
     is_success: bool,
-    result: i64,
-    message: String,
-    ret_code: Option<i64>,
+    #[serde(flatten)]
+    auth: &'a AuthResult,
 }
 
-impl From<AuthResult> for PortalAuth {
-    fn from(auth: AuthResult) -> Self {
+impl<'a> From<&'a AuthResult> for PortalAuth<'a> {
+    fn from(auth: &'a AuthResult) -> Self {
         Self {
             is_success: auth.is_success(),
-            result: auth.result,
-            message: auth.message,
-            ret_code: auth.ret_code,
+            auth,
         }
     }
 }
@@ -109,12 +106,12 @@ impl Service for PortalClient {
                     encryption,
                 } = parse(params)?;
                 let auth = self.login(&account, &password, encryption).await?;
-                reply(&PortalAuth::from(auth))
+                reply(&PortalAuth::from(&auth))
             }
             "logout" => {
                 let PortalLogout { encryption } = parse(params)?;
                 let auth = self.logout(encryption).await?;
-                reply(&PortalAuth::from(auth))
+                reply(&PortalAuth::from(&auth))
             }
             "isps" => reply(&self.isps().await?),
             _ => Err(FfiError::UnknownMethod(method.into())),
