@@ -12,13 +12,13 @@ use crate::{Error, Result, http};
 const CASHIER_URL: &str = "https://payment.v.zzu.edu.cn/WapCashDesk";
 
 /// 校园卡充值面额与网页收银台配置。
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RechargeConfig {
     /// 服务端预设的可选充值面额列表（单位：元）。
     pub amounts: Vec<u32>,
     /// 服务端是否开放网页收银台充值。
     pub is_browser_payment_enabled: bool,
-    pay_code: String,
 }
 
 /// 已创建的校园卡网页充值订单。
@@ -149,6 +149,11 @@ impl EcardClient {
     /// - 客户端尚未调用 [`Self::login`] 或底层 CAS 令牌不可用时返回 [`Error::Authentication`]。
     /// - 网络传输失败、远端返回业务错误或面额字段解析失败时返回错误。
     pub async fn recharge_config(&self) -> Result<RechargeConfig> {
+        let (config, _) = self.fetch_recharge_config().await?;
+        Ok(config)
+    }
+
+    async fn fetch_recharge_config(&self) -> Result<(RechargeConfig, String)> {
         let token = self.access_token().await?;
         let response = http::json(
             self.http
@@ -178,17 +183,14 @@ impl EcardClient {
         if amount == 0 {
             return Err(Error::invalid_input("充值金额必须大于 0 元".into()));
         }
-        let config = self.recharge_config().await?;
+        let (config, pay_code) = self.fetch_recharge_config().await?;
         if !config.is_browser_payment_enabled {
             return Err(Error::remote("校园卡服务未开放网页充值".into()));
-        }
-        if config.pay_code.is_empty() {
-            return Err(Error::decode_message("充值配置缺少支付代码".into()));
         }
         let token = self.access_token().await?;
         let transaction_id = self.transaction_id(&token).await?;
         let recharge = Recharge {
-            pay_code: &config.pay_code,
+            pay_code: &pay_code,
             amt: amount.to_string(),
             return_url: format!(
                 "https://ecard.v.zzu.edu.cn/#/pages_plugins/recharge/webSuccess?money={amount}"
@@ -392,7 +394,9 @@ struct OrderInfo {
     extra: BTreeMap<String, Value>,
 }
 
-fn parse_recharge_config_response(response: http::JsonResponse) -> Result<RechargeConfig> {
+fn parse_recharge_config_response(
+    response: http::JsonResponse,
+) -> Result<(RechargeConfig, String)> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Config {
@@ -406,7 +410,8 @@ fn parse_recharge_config_response(response: http::JsonResponse) -> Result<Rechar
     }
     let context = response.context.clone();
     let config: Config = http::ecard_data(response)?;
-    if config.wap_pay_enable && config.wap_pay_code.is_empty() {
+    let pay_code = config.wap_pay_code.trim().to_owned();
+    if config.wap_pay_enable && pay_code.is_empty() {
         return Err(Error::decode_message("充值配置缺少支付代码".into()).with_request(context));
     }
     let amounts = config
@@ -415,11 +420,13 @@ fn parse_recharge_config_response(response: http::JsonResponse) -> Result<Rechar
         .map(|amount| amount.amt.parse::<u32>().map_err(Error::decode))
         .collect::<Result<_>>()
         .map_err(|error| error.with_request(context))?;
-    Ok(RechargeConfig {
-        amounts,
-        is_browser_payment_enabled: config.wap_pay_enable,
-        pay_code: config.wap_pay_code,
-    })
+    Ok((
+        RechargeConfig {
+            amounts,
+            is_browser_payment_enabled: config.wap_pay_enable,
+        },
+        pay_code,
+    ))
 }
 
 fn validate_channel(channel: &PaymentChannel) -> Result<()> {
@@ -683,10 +690,42 @@ mod tests {
                     "wapPayCode": ""
                 }
             }),
+            config_context.clone(),
+        );
+        let (config, pay_code) = parse_recharge_config_response(disabled_empty_code).unwrap();
+        assert_eq!(
+            config,
+            RechargeConfig {
+                amounts: vec![10],
+                is_browser_payment_enabled: false,
+            }
+        );
+        assert_eq!(pay_code, "");
+        assert!(!format!("{config:?}").contains("RequestContext"));
+        assert!(!format!("{config:?}").contains("pay_code"));
+
+        let enabled_code = http::JsonResponse::new(
+            json!({
+                "success": true,
+                "resultData": {
+                    "amtGroupList": [{"amt": "20"}, {"amt": "50"}],
+                    "wapPayEnable": true,
+                    "wapPayCode": " 01 "
+                }
+            }),
             config_context,
         );
-        let config = parse_recharge_config_response(disabled_empty_code).unwrap();
-        assert!(!config.is_browser_payment_enabled);
-        assert!(!format!("{config:?}").contains("RequestContext"));
+        let (enabled, code) = parse_recharge_config_response(enabled_code).unwrap();
+        assert_eq!(code, "01");
+        let encoded = serde_json::to_value(&enabled).unwrap();
+        assert_eq!(
+            encoded,
+            json!({
+                "amounts": [20, 50],
+                "isBrowserPaymentEnabled": true,
+            })
+        );
+        let restored: RechargeConfig = serde_json::from_value(encoded).unwrap();
+        assert_eq!(restored, enabled);
     }
 }

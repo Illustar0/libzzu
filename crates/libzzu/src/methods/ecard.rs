@@ -6,8 +6,8 @@ use std::{
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use zzu::ecard::{
-    EcardClient, PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeConfig,
-    RechargeOrder, RoomId, TransactionKind, TransactionQuery,
+    EcardClient, PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeOrder,
+    RoomId, TransactionKind, TransactionQuery,
 };
 
 use super::{Guarded, ZzuCasClient, done, parse, reply};
@@ -80,22 +80,6 @@ struct RechargeEnergy {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateOrder {
     amount: u32,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RechargeConfigReply {
-    amounts: Vec<u32>,
-    is_browser_payment_enabled: bool,
-}
-
-impl From<RechargeConfig> for RechargeConfigReply {
-    fn from(config: RechargeConfig) -> Self {
-        Self {
-            amounts: config.amounts,
-            is_browser_payment_enabled: config.is_browser_payment_enabled,
-        }
-    }
 }
 
 /// 在订单的不透明状态之外补上 `id`，封装层把整个对象原样传回即可。
@@ -282,10 +266,7 @@ impl Service for Guarded<EcardClient> {
                     .await?;
                 done()
             }
-            "recharge_config" => {
-                let config = self.read().await?.recharge_config().await?;
-                reply(&RechargeConfigReply::from(config))
-            }
+            "recharge_config" => reply(&self.read().await?.recharge_config().await?),
             "create_recharge_order" => {
                 let CreateOrder { amount } = parse(params)?;
                 let order = self.write().await?.create_recharge_order(amount).await?;
