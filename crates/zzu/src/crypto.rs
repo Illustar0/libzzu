@@ -2,10 +2,14 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
 };
+#[cfg(feature = "ecard")]
 use ecb::cipher::{BlockModeDecrypt, KeyInit, block_padding::Pkcs7};
-use rand::{RngExt, rand_core::UnwrapErr, rngs::SysRng};
+use rand::rngs::SysRng;
+#[cfg(feature = "ecard")]
+use rand::{RngExt, rand_core::UnwrapErr};
 use rsa::{Pkcs1v15Encrypt, PublicKey, pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey};
 use serde::Deserialize;
+#[cfg(feature = "ecard")]
 use sm2::pke::EncryptingKey;
 
 use crate::{Error, Result};
@@ -61,9 +65,11 @@ pub(crate) fn jwt_expiration(token: &str) -> Result<i64> {
     Ok(expiration)
 }
 
+#[cfg(feature = "ecard")]
 const SM4_KEY_ALPHABET: &[u8] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+-=";
 
+#[cfg(feature = "ecard")]
 pub(crate) fn sm2_encrypt(public_key: &str, plaintext: &[u8]) -> Result<String> {
     let mut key_bytes = hex::decode(public_key).map_err(Error::crypto_source)?;
     // sm-crypto 同时接受带与不带 `04` 前缀的未压缩公钥。
@@ -82,6 +88,7 @@ pub(crate) fn sm2_encrypt(public_key: &str, plaintext: &[u8]) -> Result<String> 
     Ok(hex::encode(wire))
 }
 
+#[cfg(feature = "ecard")]
 pub(crate) fn random_sm4_key() -> String {
     let mut rng = UnwrapErr(SysRng);
     (0..16)
@@ -89,6 +96,7 @@ pub(crate) fn random_sm4_key() -> String {
         .collect()
 }
 
+#[cfg(feature = "ecard")]
 pub(crate) fn sm4_decrypt(data: &str, key: &str) -> Result<Vec<u8>> {
     let ciphertext = STANDARD
         .decode(data)
@@ -105,7 +113,9 @@ pub(crate) fn sm4_decrypt(data: &str, key: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "ecard")]
     use ecb::cipher::BlockModeEncrypt;
+    #[cfg(feature = "ecard")]
     use sm2::{
         NonZeroScalar,
         elliptic_curve::Generate,
@@ -140,6 +150,7 @@ mod tests {
         assert!(std::error::Error::source(&bad_b64).is_some());
     }
 
+    #[cfg(feature = "ecard")]
     #[test]
     fn sm2_ciphertext_matches_sm_crypto_c1c3c2_layout() {
         let secret = NonZeroScalar::try_generate_from_rng(&mut SysRng).unwrap();
@@ -157,6 +168,7 @@ mod tests {
         assert!(std::error::Error::source(&empty_err).is_some());
     }
 
+    #[cfg(feature = "ecard")]
     #[test]
     fn sm4_decrypt_uses_ascii_key_bytes() {
         let key = random_sm4_key();

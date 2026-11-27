@@ -220,7 +220,7 @@ struct Inner {
 /// 统一身份认证（CAS）客户端。
 ///
 /// 内部通过引用计数与异步互斥锁维护认证会话。克隆出的实例共享同一套令牌缓存、
-/// 设备标识与登录状态，可直接传给 [`crate::eas::UndergradEasClient`] 与 [`crate::ecard::EcardClient`]。
+/// 设备标识与登录状态，可直接传给 `eas::UndergradEasClient`、`ecard::EcardClient` 与 `mail::MailClient`。
 #[derive(Clone)]
 pub struct CasClient {
     inner: Arc<Inner>,
@@ -800,8 +800,8 @@ impl CasClient {
     /// 清除本地缓存的令牌、MFA 状态与登录标记。
     ///
     /// 所有共享同一会话的 [`CasClient`] 实例会立即变为未登录状态。
-    /// 派生的 [`crate::eas::UndergradEasClient`]、[`crate::ecard::EcardClient`] 与
-    /// [`crate::mail::MailClient`] 仍保留各自的本地缓存（如 `is_logged_in()`、`current_semester()`），
+    /// 派生的 `eas::UndergradEasClient`、`ecard::EcardClient` 与
+    /// `mail::MailClient` 仍保留各自的本地缓存（如 `is_logged_in()`、`current_semester()`），
     /// 但下次读取 [`Self::user_token`] 时会返回未认证错误。
     pub async fn logout(&self) {
         let mut session = self.inner.session.lock().await;

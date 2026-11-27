@@ -272,6 +272,7 @@ impl Error {
         }
     }
 
+    #[cfg(any(feature = "auth", feature = "network", test))]
     fn context_mut(&mut self) -> &mut ErrorContext {
         match self {
             Self::Transport(error) => &mut error.context,
@@ -381,68 +382,84 @@ impl Error {
     pub(crate) fn invalid_input(message: String) -> Self {
         Self::InvalidInput(ErrorDetails::new(InvalidInputErrorKind::Unknown, message))
     }
+    #[cfg(any(feature = "auth", feature = "network"))]
     pub(crate) fn not_authenticated() -> Self {
         Self::authentication(
             AuthenticationErrorKind::NotAuthenticated,
             "需要先登录".into(),
         )
     }
+    #[cfg(any(feature = "auth", feature = "network"))]
     pub(crate) fn authentication(kind: AuthenticationErrorKind, message: String) -> Self {
         Self::Authentication(ErrorDetails::new(kind, message))
     }
+    #[cfg(any(feature = "auth", feature = "network", test))]
     pub(crate) fn http(message: String) -> Self {
         Self::Http(ErrorDetails::new(HttpErrorKind::Unknown, message))
     }
+    #[cfg(feature = "auth")]
     pub(crate) fn mfa_required() -> Self {
         Self::authentication(
             AuthenticationErrorKind::MfaRequired,
             "需要完成 MFA 验证".into(),
         )
     }
+    #[cfg(feature = "auth")]
     pub(crate) fn invalid_mfa_state(message: String) -> Self {
         Self::authentication(AuthenticationErrorKind::InvalidMfaState, message)
     }
+    #[cfg(any(feature = "auth", feature = "network", test))]
     pub(crate) fn remote(message: String) -> Self {
         Self::Remote(ErrorDetails::new(RemoteErrorKind::Unknown, message))
     }
+    #[cfg(feature = "eas")]
     pub(crate) fn not_found(message: String) -> Self {
         Self::NotFound(ErrorDetails::new(NotFoundErrorKind::Unknown, message))
     }
+    #[cfg(feature = "auth")]
     pub(crate) fn crypto(message: String) -> Self {
         Self::Crypto(ErrorDetails::new(CryptoErrorKind::Unknown, message))
     }
+    #[cfg(any(feature = "auth", feature = "network", test))]
     pub(crate) fn decode_message(message: String) -> Self {
         Self::Decode(ErrorDetails::new(DecodeErrorKind::Unknown, message))
     }
 
+    #[cfg(feature = "auth")]
     pub(crate) fn crypto_source(source: impl StdError + Send + Sync + 'static) -> Self {
         Self::crypto_with_source("加密处理失败", source)
     }
+    #[cfg(feature = "auth")]
     pub(crate) fn crypto_with_source(
         message: impl Into<String>,
         source: impl StdError + Send + Sync + 'static,
     ) -> Self {
         Self::Crypto(ErrorDetails::new(CryptoErrorKind::Unknown, message).with_source(source))
     }
+    #[cfg(any(feature = "auth", feature = "network"))]
     pub(crate) fn decode_with_source(
         message: impl Into<String>,
         source: impl StdError + Send + Sync + 'static,
     ) -> Self {
         Self::Decode(ErrorDetails::new(DecodeErrorKind::Unknown, message).with_source(source))
     }
+    #[cfg(feature = "eas")]
     pub(crate) fn map_message(mut self, f: impl FnOnce(&str) -> String) -> Self {
         let updated = f(&self.context().message);
         self.context_mut().message = updated;
         self
     }
+    #[cfg(any(feature = "auth", feature = "network", test))]
     pub(crate) fn with_path(mut self, path: impl Into<String>) -> Self {
         self.context_mut().path = Some(path.into());
         self
     }
+    #[cfg(any(feature = "auth", feature = "network", test))]
     pub(crate) fn with_request(mut self, context: Arc<RequestContext>) -> Self {
         self.context_mut().request = Some(context);
         self
     }
+    #[cfg(feature = "auth")]
     pub(crate) fn into_authentication(self, kind: AuthenticationErrorKind) -> Self {
         let context = match self {
             Self::Http(error) => error.context,

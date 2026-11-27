@@ -1,13 +1,24 @@
-use std::{fmt, future::Future, ops::Deref, sync::Arc};
+#[cfg(any(feature = "auth", feature = "network"))]
+use std::future::Future;
+use std::sync::Arc;
+#[cfg(any(feature = "auth", feature = "network", test))]
+use std::{fmt, ops::Deref};
 
-use reqwest::{
-    Certificate, Client, ClientBuilder, RequestBuilder, StatusCode, Url, header::HeaderMap,
-    redirect::Policy,
-};
-use serde::{Deserialize, Deserializer, de::DeserializeOwned};
+#[cfg(any(feature = "auth", feature = "network"))]
+use reqwest::RequestBuilder;
+use reqwest::{Certificate, Client, ClientBuilder, redirect::Policy};
+#[cfg(any(feature = "auth", feature = "network", test))]
+use reqwest::{StatusCode, Url, header::HeaderMap};
+#[cfg(any(feature = "auth", feature = "network", test))]
+use serde::de::DeserializeOwned;
+#[cfg(feature = "auth")]
+use serde::{Deserialize, Deserializer};
+#[cfg(any(feature = "auth", feature = "network", test))]
 use serde_json::Value;
 
-use crate::{Error, RequestContext, Result};
+#[cfg(any(feature = "auth", feature = "network", test))]
+use crate::RequestContext;
+use crate::{Error, Result};
 
 /// HTTP 客户端校验服务端证书时信任的根证书，默认使用平台校验器。
 ///
@@ -63,6 +74,7 @@ impl TrustRoots {
     }
 }
 
+#[cfg(feature = "auth")]
 pub(crate) fn client() -> Result<Client> {
     TrustRoots::default().client()
 }
@@ -72,12 +84,19 @@ pub fn client_builder() -> ClientBuilder {
     TrustRoots::default().client_builder()
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 pub(crate) struct Response {
+    #[cfg_attr(not(feature = "auth"), expect(dead_code))]
     pub headers: HeaderMap,
+    #[cfg_attr(
+        not(any(feature = "ecard", feature = "mail", feature = "network")),
+        expect(dead_code)
+    )]
     pub url: Url,
     pub context: Arc<RequestContext>,
 }
 
+#[cfg(feature = "auth")]
 pub(crate) struct BytesResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
@@ -85,6 +104,7 @@ pub(crate) struct BytesResponse {
     pub context: Arc<RequestContext>,
 }
 
+#[cfg(any(feature = "auth", feature = "network"))]
 fn sanitized_request_url(url: &Url) -> String {
     let mut sanitized = url.clone();
     sanitized.set_query(None);
@@ -94,10 +114,12 @@ fn sanitized_request_url(url: &Url) -> String {
     sanitized.to_string()
 }
 
+#[cfg(any(feature = "auth", feature = "network"))]
 pub(crate) async fn send(builder: RequestBuilder) -> Result<Response> {
     send_with_text_decoder(builder, reqwest::Response::text).await
 }
 
+#[cfg(feature = "auth")]
 pub(crate) async fn bytes(builder: RequestBuilder) -> Result<BytesResponse> {
     let (client, request) = builder.build_split();
     let request = request?;
@@ -142,6 +164,7 @@ pub(crate) async fn bytes(builder: RequestBuilder) -> Result<BytesResponse> {
     })
 }
 
+#[cfg(any(feature = "auth", feature = "network"))]
 pub(crate) async fn send_with_text_decoder<DecodeFuture>(
     builder: RequestBuilder,
     decode_body: impl FnOnce(reqwest::Response) -> DecodeFuture,
@@ -182,6 +205,7 @@ where
     })
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 impl Response {
     pub fn body(&self) -> &str {
         self.context.response_body.as_deref().unwrap_or_default()
@@ -205,6 +229,7 @@ impl Response {
         Err(Error::http(detail).with_request(self.context))
     }
 
+    #[cfg(any(feature = "auth", test))]
     pub fn allow_redirect(self) -> Result<Self> {
         if self
             .context
@@ -217,6 +242,7 @@ impl Response {
     }
 }
 
+#[cfg(feature = "auth")]
 impl BytesResponse {
     pub fn require_success(self) -> Result<Self> {
         if self.status.is_success() {
@@ -238,11 +264,13 @@ impl BytesResponse {
     }
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 pub(crate) struct JsonResponse {
     pub value: Value,
     pub context: Arc<RequestContext>,
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 impl Deref for JsonResponse {
     type Target = Value;
     fn deref(&self) -> &Value {
@@ -250,12 +278,14 @@ impl Deref for JsonResponse {
     }
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 impl JsonResponse {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "auth"))]
     pub(crate) fn new(value: Value, context: Arc<RequestContext>) -> Self {
         Self { value, context }
     }
 
+    #[cfg(feature = "ecard")]
     pub fn map_value(self, transform: impl FnOnce(&Value) -> Result<Value>) -> Result<Self> {
         let value =
             transform(&self.value).map_err(|error| error.with_request(self.context.clone()))?;
@@ -265,15 +295,18 @@ impl JsonResponse {
         })
     }
 
+    #[cfg(any(feature = "ecard", feature = "network"))]
     pub fn decode<T: DeserializeOwned>(self) -> Result<T> {
         deserialize_value(self.value, None).map_err(|error| error.with_request(self.context))
     }
 }
 
+#[cfg(any(feature = "auth", feature = "network"))]
 pub(crate) async fn json(request: RequestBuilder) -> Result<JsonResponse> {
     parse_json_response(send(request).await?.require_success()?)
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 fn parse_json_response(response: Response) -> Result<JsonResponse> {
     let value = serde_json::from_str(response.body())
         .map_err(|error| Error::from(error).with_request(response.context.clone()))?;
@@ -283,11 +316,13 @@ fn parse_json_response(response: Response) -> Result<JsonResponse> {
     })
 }
 
+#[cfg(any(feature = "auth", test))]
 pub(crate) fn data<T: DeserializeOwned>(response: JsonResponse, status_key: &str) -> Result<T> {
     check_status(&response, status_key)?;
     decode_field(response, "data")
 }
 
+#[cfg(any(feature = "auth", test))]
 pub(crate) fn check_status(response: &JsonResponse, status_key: &str) -> Result<()> {
     let status = response
         .value
@@ -313,6 +348,7 @@ pub(crate) fn check_status(response: &JsonResponse, status_key: &str) -> Result<
     Ok(())
 }
 
+#[cfg(feature = "ecard")]
 pub(crate) fn ecard_data<T: DeserializeOwned>(response: JsonResponse) -> Result<T> {
     match response.get("success").and_then(Value::as_bool) {
         Some(true) => decode_field(response, "resultData"),
@@ -325,6 +361,7 @@ pub(crate) fn ecard_data<T: DeserializeOwned>(response: JsonResponse) -> Result<
     }
 }
 
+#[cfg(any(feature = "auth", test))]
 pub(crate) fn remote_error(
     value: &Value,
     mut context: Arc<RequestContext>,
@@ -336,6 +373,7 @@ pub(crate) fn remote_error(
     Error::remote(message(value)).with_request(context)
 }
 
+#[cfg(any(feature = "auth", test))]
 fn decode_field<T: DeserializeOwned>(mut response: JsonResponse, key: &str) -> Result<T> {
     let field = response.value.get_mut(key).ok_or_else(|| {
         Error::decode_message(format!("服务器响应缺少 {key}"))
@@ -345,29 +383,34 @@ fn decode_field<T: DeserializeOwned>(mut response: JsonResponse, key: &str) -> R
     deserialize_value(field.take(), Some(key)).map_err(|error| error.with_request(response.context))
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 #[derive(Debug)]
 struct PathDecodeError {
     path: String,
     source: serde_json::Error,
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 impl fmt::Display for PathDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}: {}", self.path, self.source)
     }
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 impl std::error::Error for PathDecodeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.source.source()
     }
 }
 
+#[cfg(any(feature = "network", test))]
 pub(crate) fn deserialize_str<T: DeserializeOwned>(text: &str) -> Result<T> {
     let mut deserializer = serde_json::Deserializer::from_str(text);
     serde_path_to_error::deserialize(&mut deserializer).map_err(|err| into_path_error(err, None))
 }
 
+#[cfg(any(feature = "auth", feature = "ecard", feature = "network", test))]
 pub(crate) fn deserialize_value<T: DeserializeOwned>(
     value: Value,
     root: Option<&str>,
@@ -375,6 +418,7 @@ pub(crate) fn deserialize_value<T: DeserializeOwned>(
     serde_path_to_error::deserialize(value).map_err(|err| into_path_error(err, root))
 }
 
+#[cfg(feature = "mail")]
 pub(crate) fn deserialize_value_ref<T: DeserializeOwned>(
     value: &Value,
     root: Option<&str>,
@@ -382,6 +426,7 @@ pub(crate) fn deserialize_value_ref<T: DeserializeOwned>(
     serde_path_to_error::deserialize(value).map_err(|err| into_path_error(err, root))
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 fn into_path_error(
     err: serde_path_to_error::Error<serde_json::Error>,
     root: Option<&str>,
@@ -408,6 +453,7 @@ fn into_path_error(
 }
 
 /// 将显式 JSON `null` 反序列化为 `T::default()`，避免上游空值标量字段中断整段解码。
+#[cfg(feature = "auth")]
 pub(crate) fn deserialize_null_default<'de, D, T>(
     deserializer: D,
 ) -> std::result::Result<T, D::Error>
@@ -418,10 +464,12 @@ where
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
+#[cfg(any(feature = "auth", test))]
 pub(crate) fn message(value: &Value) -> String {
     response_message(value).unwrap_or_else(|| "服务器未提供错误消息".into())
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 fn response_message(value: &Value) -> Option<String> {
     ["message", "msg", "error"].into_iter().find_map(|key| {
         value
@@ -432,6 +480,7 @@ fn response_message(value: &Value) -> Option<String> {
     })
 }
 
+#[cfg(any(feature = "auth", feature = "network", test))]
 fn scalar_error_code(value: &Value, key: &str) -> Option<String> {
     match value.get(key)? {
         Value::String(text) => {
@@ -443,12 +492,14 @@ fn scalar_error_code(value: &Value, key: &str) -> Option<String> {
     }
 }
 
+#[cfg(feature = "ecard")]
 pub(crate) fn parse_money(value: &Value, field: &str) -> Result<crate::Decimal> {
     crate::money::deserialize_decimal(value).map_err(|error| {
         Error::decode_with_source(format!("{field} 必须是可精确表示的十进制金额"), error)
     })
 }
 
+#[cfg(feature = "auth")]
 pub(crate) fn parse_number(value: &Value, field: &str) -> Result<f64> {
     let number = value
         .as_f64()

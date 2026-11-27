@@ -37,6 +37,7 @@ url = { version = "2", features = ["serde"] }
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_op_in_unsafe_fn = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(docsrs)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
