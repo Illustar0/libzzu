@@ -63,7 +63,11 @@ class Build : FalloutBuild
 
     Target Lint => target => target
         .After(Format)
-        .Executes(() => Cargo("clippy --workspace --all-targets --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput));
+        .Executes(() =>
+        {
+            Cargo("clippy --package zzu --lib --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput);
+            Cargo("clippy --workspace --all-targets --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput);
+        });
 
     Target Test => target => target
         .After(Lint)
