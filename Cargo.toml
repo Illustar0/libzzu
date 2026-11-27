@@ -19,7 +19,7 @@ hex = "0.4"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 icalendar = { version = "0.17", default-features = false }
 pem = "4"
-rand = "0.8"
+rand = "0.10"
 regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "cookies", "json", "query", "form", "charset", "gzip"] }
 rsa = { version = "0.10", features = ["pkcs1v15"] }

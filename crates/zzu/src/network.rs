@@ -10,7 +10,6 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use encoding_rs::GBK;
 use jiff::{Timestamp, Zoned, civil::DateTime};
-use rand::Rng;
 use regex::Regex;
 use reqwest::{
     Client, Url,
@@ -364,7 +363,7 @@ impl PortalClient {
             terminal_type: encode("3")?,
             lang: encode("zh-cn")?,
             encrypt: (encryption == PortalEncryption::Xor).then_some("1"),
-            v: rand::thread_rng().gen_range(500..=10499),
+            v: rand::random_range(500..=10499),
         };
         self.send_portal_jsonp("/eportal/portal/login", &query)
             .await
@@ -397,7 +396,7 @@ impl PortalClient {
             js_version: encode("4.2.2")?,
             lang: encode("zh-cn")?,
             encrypt: (encryption == PortalEncryption::Xor).then_some("1"),
-            v: rand::thread_rng().gen_range(500..=10499),
+            v: rand::random_range(500..=10499),
         };
         self.send_portal_jsonp("/eportal/portal/logout", &query)
             .await
@@ -436,7 +435,7 @@ impl PortalClient {
             js_version: "4.X",
             terminal_type: "3",
             lang: "zh",
-            v: rand::thread_rng().gen_range(500..=10499),
+            v: rand::random_range(500..=10499),
         };
         let config_url = self
             .base_url

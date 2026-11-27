@@ -3,10 +3,10 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD},
 };
 use ecb::cipher::{BlockModeDecrypt, KeyInit, block_padding::Pkcs7};
-use rand::Rng;
+use rand::{RngExt, rand_core::UnwrapErr, rngs::SysRng};
 use rsa::{Pkcs1v15Encrypt, PublicKey, pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey};
 use serde::Deserialize;
-use sm2::{elliptic_curve::common::getrandom::SysRng, pke::EncryptingKey};
+use sm2::pke::EncryptingKey;
 
 use crate::{Error, Result};
 
@@ -83,9 +83,9 @@ pub(crate) fn sm2_encrypt(public_key: &str, plaintext: &[u8]) -> Result<String> 
 }
 
 pub(crate) fn random_sm4_key() -> String {
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = UnwrapErr(SysRng);
     (0..16)
-        .map(|_| char::from(SM4_KEY_ALPHABET[rng.gen_range(0..SM4_KEY_ALPHABET.len())]))
+        .map(|_| char::from(SM4_KEY_ALPHABET[rng.random_range(0..SM4_KEY_ALPHABET.len())]))
         .collect()
 }
 
