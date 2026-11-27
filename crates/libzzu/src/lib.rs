@@ -26,7 +26,7 @@ pub use runtime::*;
 /// C ABI 主版本号：出现破坏性变更时递增。
 pub const ZZU_ABI_VERSION_MAJOR: u32 = 2;
 /// C ABI 次版本号：新增方法或字段时递增，主版本号递增时归零。
-pub const ZZU_ABI_VERSION_MINOR: u32 = 0;
+pub const ZZU_ABI_VERSION_MINOR: u32 = 1;
 
 /// 返回链接库实现的 C ABI 版本，编码为 `(major << 16) | minor`。
 ///
