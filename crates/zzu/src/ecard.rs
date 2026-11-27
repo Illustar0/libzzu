@@ -345,14 +345,17 @@ impl EcardClient {
         )
         .await?;
         let response = response.map_value(|body| decrypt_response(body, &sm4_key))?;
-        let context = response.context.clone();
         match response.get("success").and_then(Value::as_bool) {
             Some(true) => Ok(()),
-            Some(false) => Err(Error::remote(http::message(&response)).with_request(context)),
+            Some(false) => Err(http::remote_error(
+                &response.value,
+                response.context,
+                "code",
+            )),
             None => Err(Error::decode_message(
                 "充值响应缺少 success，支付结果未知，请查询余额后再决定是否重试".into(),
             )
-            .with_request(context)),
+            .with_request(response.context)),
         }
     }
 
@@ -694,7 +697,7 @@ mod tests {
         let error = parse_balance_response(remote_failure, key).unwrap_err();
         assert!(error.is_remote());
         assert_eq!(error.message(), "会话已过期");
-        assert!(error.request().is_some());
+        assert_eq!(error.request().unwrap().error_code.as_deref(), Some("401"));
 
         let wrong_key_payload = user_info_response(encrypt_payload(
             &json!({"success": true, "resultData": {"user": {"balance": "10.46"}}}),

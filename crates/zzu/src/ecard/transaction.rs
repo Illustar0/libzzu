@@ -344,7 +344,10 @@ mod tests {
         let error = parse_transactions_response(remote_failure).unwrap_err();
         assert!(error.is_remote());
         assert_eq!(error.message(), "查询区间超出限制");
-        assert!(error.request().is_some());
+        assert_eq!(
+            error.request().unwrap().error_code.as_deref(),
+            Some("valid_error_1004")
+        );
 
         for bad_item in [
             json!({"journo": "1", "date": "bad-date", "amt": "-1.00", "isRefund": "0"}),

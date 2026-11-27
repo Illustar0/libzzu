@@ -426,13 +426,15 @@ fn cashier_data<T: DeserializeOwned>(mut response: http::JsonResponse) -> Result
     let code = response
         .get("returncode")
         .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
         .ok_or_else(|| {
             Error::decode_message("收银台响应缺少 returncode".into())
                 .with_request(response.context.clone())
         })?;
-    let code = code.to_owned();
-    Arc::make_mut(&mut response.context).error_code = Some(code.clone());
     if code != "SUCCESS" {
+        let code = code.to_owned();
+        Arc::make_mut(&mut response.context).error_code = Some(code);
         let message = response
             .get("returnmsg")
             .and_then(Value::as_str)

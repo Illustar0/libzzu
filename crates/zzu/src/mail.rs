@@ -600,8 +600,9 @@ mod tests {
     }
 
     fn raw_mail_response(url: &str, status: u16, body: &str) -> http::Response {
-        let error_code = serde_json::from_str::<Value>(body)
-            .ok()
+        let error_code = (!(200..300).contains(&status))
+            .then(|| serde_json::from_str::<Value>(body).ok())
+            .flatten()
             .and_then(|value| value.get("code").and_then(Value::as_str).map(str::to_owned));
         http::Response {
             headers: HeaderMap::new(),

@@ -127,9 +127,11 @@ pub(crate) async fn bytes(builder: RequestBuilder) -> Result<BytesResponse> {
     if (!status.is_success() || !is_image)
         && let Ok(text) = std::str::from_utf8(&body)
     {
-        context.error_code = serde_json::from_str::<Value>(text)
-            .ok()
-            .and_then(|value| value.get("code").map(value_code));
+        if !status.is_success() {
+            context.error_code = serde_json::from_str::<Value>(text)
+                .ok()
+                .and_then(|value| scalar_error_code(&value, "code"));
+        }
         context.response_body = Some(text.to_owned());
     }
     Ok(BytesResponse {
@@ -160,15 +162,18 @@ where
         .execute(request)
         .await
         .map_err(|error| Error::from(error).with_request(Arc::new(context.clone())))?;
-    context.status_code = Some(response.status().as_u16());
+    let status = response.status();
+    context.status_code = Some(status.as_u16());
     let headers = response.headers().clone();
     let url = response.url().clone();
     let body = decode_body(response)
         .await
         .map_err(|error| Error::from(error).with_request(Arc::new(context.clone())))?;
-    context.error_code = serde_json::from_str::<Value>(&body)
-        .ok()
-        .and_then(|value| value.get("code").map(value_code));
+    if !status.is_success() {
+        context.error_code = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|value| scalar_error_code(&value, "code"));
+    }
     context.response_body = Some(body);
     Ok(Response {
         headers,
@@ -239,7 +244,7 @@ impl BytesResponse {
 }
 
 pub(crate) struct JsonResponse {
-    value: Value,
+    pub value: Value,
     pub context: Arc<RequestContext>,
 }
 
@@ -286,22 +291,24 @@ pub(crate) fn data<T: DeserializeOwned>(response: JsonResponse, status_key: &str
 }
 
 pub(crate) fn check_status(response: &JsonResponse, status_key: &str) -> Result<()> {
-    check_value_status(&response.value, status_key).map_err(|error| {
-        let mut context = (*response.context).clone();
-        context.error_code = response.value.get(status_key).map(value_code);
-        error.with_request(Arc::new(context))
-    })
-}
-
-fn check_value_status(value: &Value, status_key: &str) -> Result<()> {
-    let status = value
+    let status = response
+        .value
         .get(status_key)
-        .ok_or_else(|| Error::decode_message(format!("服务器响应缺少 {status_key}")))?;
-    let status = status
+        .ok_or_else(|| {
+            Error::decode_message(format!("服务器响应缺少 {status_key}"))
+                .with_request(response.context.clone())
+        })?
         .as_i64()
-        .ok_or_else(|| Error::decode_message(format!("{status_key} 必须为整数")))?;
+        .ok_or_else(|| {
+            Error::decode_message(format!("{status_key} 必须为整数"))
+                .with_request(response.context.clone())
+        })?;
     if status != 0 {
-        return Err(Error::remote(message(value)));
+        return Err(remote_error(
+            &response.value,
+            response.context.clone(),
+            status_key,
+        ));
     }
     Ok(())
 }
@@ -309,12 +316,23 @@ fn check_value_status(value: &Value, status_key: &str) -> Result<()> {
 pub(crate) fn ecard_data<T: DeserializeOwned>(response: JsonResponse) -> Result<T> {
     match response.get("success").and_then(Value::as_bool) {
         Some(true) => decode_field(response, "resultData"),
-        Some(false) => Err(Error::remote(message(&response)).with_request(response.context)),
+        Some(false) => Err(remote_error(&response.value, response.context, "code")),
         None => Err(
             Error::decode_message("校园卡响应缺少有效的 success 字段".into())
                 .with_request(response.context),
         ),
     }
+}
+
+pub(crate) fn remote_error(
+    value: &Value,
+    mut context: Arc<RequestContext>,
+    code_key: &str,
+) -> Error {
+    if let Some(code) = scalar_error_code(value, code_key) {
+        Arc::make_mut(&mut context).error_code = Some(code);
+    }
+    Error::remote(message(value)).with_request(context)
 }
 
 fn decode_field<T: DeserializeOwned>(mut response: JsonResponse, key: &str) -> Result<T> {
@@ -340,10 +358,15 @@ fn response_message(value: &Value) -> Option<String> {
     })
 }
 
-fn value_code(value: &Value) -> String {
-    value
-        .as_str()
-        .map_or_else(|| value.to_string(), str::to_owned)
+fn scalar_error_code(value: &Value, key: &str) -> Option<String> {
+    match value.get(key)? {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 pub(crate) fn parse_money(value: &Value, field: &str) -> Result<crate::Decimal> {
@@ -402,5 +425,33 @@ mod tests {
         let error = data::<Value>(response, "result").unwrap_err();
         assert!(error.is_remote());
         assert_eq!(error.request().unwrap().error_code.as_deref(), Some("42"));
+
+        // 成功信封在后续字段解码失败时不应把业务成功码误记为 error_code。
+        let ok_envelope_bad_data = JsonResponse {
+            value: json!({"code": 0, "data": "not-an-int"}),
+            context: self::response(200, r#"{"code":0,"data":"not-an-int"}"#).context,
+        };
+        let error = data::<i32>(ok_envelope_bad_data, "code").unwrap_err();
+        assert!(error.is_decode());
+        assert_eq!(error.request().unwrap().error_code, None);
+
+        // 非标量、null 与空白字符串不应被提取为 error_code。
+        for empty_or_non_scalar in [
+            json!({"code": ""}),
+            json!({"code": "   "}),
+            json!({"code": null}),
+            json!({"code": true}),
+            json!({"code": {"nested": 1}}),
+        ] {
+            assert_eq!(scalar_error_code(&empty_or_non_scalar, "code"), None);
+        }
+        assert_eq!(
+            scalar_error_code(&json!({"code": " valid_error_1004 "}), "code").as_deref(),
+            Some("valid_error_1004")
+        );
+        assert_eq!(
+            scalar_error_code(&json!({"code": 401}), "code").as_deref(),
+            Some("401")
+        );
     }
 }

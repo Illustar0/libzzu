@@ -145,12 +145,12 @@ fn parse_json_portrait_payload(
     let value: Value = serde_json::from_slice(bytes)
         .map_err(|error| Error::from(error).with_request(context.clone()))?;
     if value.get("acknowleged").and_then(Value::as_bool) == Some(false) {
-        return Err(Error::remote(http::message(&value)).with_request(context.clone()));
+        return Err(http::remote_error(&value, context.clone(), "code"));
     }
     if let Some(code) = value.get("code").and_then(Value::as_i64)
         && code != 0
     {
-        return Err(Error::remote(http::message(&value)).with_request(context.clone()));
+        return Err(http::remote_error(&value, context.clone(), "code"));
     }
     if value.get("data").is_some_and(Value::is_null) {
         return Ok(None);
@@ -301,6 +301,10 @@ mod tests {
         .unwrap_err();
         assert!(remote_err.is_remote());
         assert_eq!(remote_err.message(), "文件服务异常");
+        assert_eq!(
+            remote_err.request().unwrap().error_code.as_deref(),
+            Some("500")
+        );
 
         let html_err = parse_portrait_response(portrait_response(
             200,
