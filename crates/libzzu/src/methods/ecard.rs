@@ -96,27 +96,17 @@ struct WithOrder {
     order: RechargeOrder,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Channel {
+struct ChannelInput {
     id: String,
     name: String,
     #[serde(default)]
     account_id: Option<String>,
 }
 
-impl From<PaymentChannel> for Channel {
-    fn from(channel: PaymentChannel) -> Self {
-        Self {
-            id: channel.id,
-            name: channel.name,
-            account_id: channel.account_id,
-        }
-    }
-}
-
-impl From<Channel> for PaymentChannel {
-    fn from(channel: Channel) -> Self {
+impl From<ChannelInput> for PaymentChannel {
+    fn from(channel: ChannelInput) -> Self {
         Self {
             id: channel.id,
             name: channel.name,
@@ -129,7 +119,7 @@ impl From<Channel> for PaymentChannel {
 #[serde(deny_unknown_fields)]
 struct CheckoutUrl {
     order: RechargeOrder,
-    channel: Channel,
+    channel: ChannelInput,
 }
 
 #[derive(Deserialize)]
@@ -168,7 +158,7 @@ impl From<Context> for PaymentContext {
 #[serde(deny_unknown_fields)]
 struct PreparePayment {
     order: RechargeOrder,
-    channel: Channel,
+    channel: ChannelInput,
     context: Option<Context>,
 }
 
@@ -277,9 +267,7 @@ impl Service for Guarded<EcardClient> {
             }
             "payment_channels" => {
                 let WithOrder { order } = parse(params)?;
-                let channels = self.read().await?.payment_channels(&order).await?;
-                let channels: Vec<_> = channels.into_iter().map(Channel::from).collect();
-                reply(&channels)
+                reply(&self.read().await?.payment_channels(&order).await?)
             }
             "prepare_payment" => {
                 let PreparePayment {

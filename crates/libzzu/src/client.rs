@@ -775,6 +775,17 @@ mod tests {
         );
         assert_eq!(status, ZZU_OK, "{url}");
         assert!(url.as_str().unwrap().contains("callPaywayid=0106"));
+
+        let mut misspelled_channel = params;
+        misspelled_channel["channel"]["account_id"] = json!("acc-1");
+        assert_eq!(
+            compute_json(
+                zzu_recharge_order_checkout_url_for,
+                &serde_json::to_vec(&misspelled_channel).unwrap(),
+            )
+            .0,
+            ZZU_INVALID_INPUT
+        );
     }
 
     #[test]

@@ -75,17 +75,36 @@ impl fmt::Debug for RechargeOrder {
 }
 
 /// 学校网页收银台支持的支付渠道（如支付宝、微信支付）。
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PaymentChannel {
     /// 支付渠道编码。
-    #[serde(rename = "paywayid")]
     pub id: String,
     /// 支付渠道显示名称。
-    #[serde(rename = "paywayname")]
     pub name: String,
     /// 渠道关联的收款账户标识。
-    #[serde(rename = "payAccountid", default)]
+    #[serde(default)]
     pub account_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawPaymentChannel {
+    #[serde(rename = "paywayid")]
+    id: String,
+    #[serde(rename = "paywayname")]
+    name: String,
+    #[serde(rename = "payAccountid", default)]
+    account_id: Option<String>,
+}
+
+impl From<RawPaymentChannel> for PaymentChannel {
+    fn from(raw: RawPaymentChannel) -> Self {
+        Self {
+            id: raw.id,
+            name: raw.name,
+            account_id: raw.account_id,
+        }
+    }
 }
 
 /// 向收银台预下单时上报的客户端设备平台。
@@ -220,10 +239,6 @@ impl EcardClient {
     ///
     /// 网络传输失败、收银台返回业务错误或渠道列表解析失败时返回错误。
     pub async fn payment_channels(&self, order: &RechargeOrder) -> Result<Vec<PaymentChannel>> {
-        #[derive(Deserialize)]
-        struct Channels {
-            payways: Vec<PaymentChannel>,
-        }
         let info = &order.payment.order_info;
         let response = http::json(
             self.http
@@ -235,8 +250,7 @@ impl EcardClient {
                 })),
         )
         .await?;
-        let response: Channels = cashier_data(response)?;
-        Ok(response.payways)
+        parse_payment_channels_response(response)
     }
 
     /// 向学校收银台提交预支付请求，提取拉起第三方支付所需的跳转链接或 `POST` 表单。
@@ -429,6 +443,19 @@ fn parse_recharge_config_response(
     ))
 }
 
+fn parse_payment_channels_response(response: http::JsonResponse) -> Result<Vec<PaymentChannel>> {
+    #[derive(Deserialize)]
+    struct Channels {
+        payways: Vec<RawPaymentChannel>,
+    }
+    let response: Channels = cashier_data(response)?;
+    Ok(response
+        .payways
+        .into_iter()
+        .map(PaymentChannel::from)
+        .collect())
+}
+
 fn validate_channel(channel: &PaymentChannel) -> Result<()> {
     if channel.id.is_empty() {
         return Err(Error::invalid_input("支付渠道 ID 不能为空".into()));
@@ -579,11 +606,40 @@ mod tests {
         let info: Value = serde_json::from_str(&query["orderInfo"]).unwrap();
         assert_eq!(info["extend"]["accessToken"], "test-payment-secret");
         assert_eq!(info["goodsname"], "校园卡充值");
-        let channel: PaymentChannel = serde_json::from_value(json!({
-            "paywayid": "0106", "paywayname": "支付宝", "payAccountid": null,
-        }))
+        let channels = parse_payment_channels_response(http::JsonResponse::new(
+            json!({
+                "returncode": "SUCCESS",
+                "payways": [
+                    {"paywayid": "0106", "paywayname": "支付宝", "payAccountid": null},
+                    {"paywayid": "0201", "paywayname": "微信支付", "payAccountid": "acc-1"}
+                ]
+            }),
+            Arc::new(crate::RequestContext {
+                method: "POST".into(),
+                url: format!("{CASHIER_URL}/payWays"),
+                status_code: Some(200),
+                error_code: None,
+                response_body: None,
+            }),
+        ))
         .unwrap();
-        let selected = order.checkout_url_for(&channel).unwrap();
+        let channel = &channels[0];
+        let encoded_channel = serde_json::to_value(channel).unwrap();
+        assert_eq!(
+            encoded_channel,
+            json!({"id": "0106", "name": "支付宝", "accountId": null})
+        );
+        let restored_channel: PaymentChannel = serde_json::from_value(encoded_channel).unwrap();
+        assert_eq!(&restored_channel, channel);
+        assert_eq!(channels[1].account_id.as_deref(), Some("acc-1"));
+        assert!(
+            serde_json::from_value::<PaymentChannel>(json!({
+                "paywayid": "0106",
+                "paywayname": "支付宝"
+            }))
+            .is_err()
+        );
+        let selected = order.checkout_url_for(channel).unwrap();
         assert!(
             selected
                 .query_pairs()
@@ -595,8 +651,8 @@ mod tests {
         assert_eq!(restored.id(), order.id());
         assert_eq!(restored.amount(), order.amount());
         assert_eq!(
-            restored.checkout_url_for(&channel).unwrap(),
-            order.checkout_url_for(&channel).unwrap()
+            restored.checkout_url_for(channel).unwrap(),
+            order.checkout_url_for(channel).unwrap()
         );
         let created: CreatedRecharge = serde_json::from_value(payload).unwrap();
         assert!(created.into_order(20).unwrap_err().is_decode());
