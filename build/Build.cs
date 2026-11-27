@@ -61,17 +61,38 @@ class Build : FalloutBuild
     Target Format => target => target
         .Executes(() => Cargo("fmt --all -- --check", workingDirectory: RootDirectory, logger: LogToolOutput));
 
+    static readonly string[] ZzuIsolatedFeatures =
+    [
+        "auth",
+        "eas",
+        "ecard",
+        "mail",
+        "network",
+        "schemars",
+        "network,schemars"
+    ];
+
     Target Lint => target => target
         .After(Format)
         .Executes(() =>
         {
+            Cargo("clippy --package zzu --lib --tests --no-default-features --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput);
+            foreach (var features in ZzuIsolatedFeatures)
+                Cargo($"clippy --package zzu --lib --tests --no-default-features --features {features} --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput);
+            Cargo("clippy --package zzu --lib --tests --all-features --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput);
             Cargo("clippy --package zzu --lib --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput);
             Cargo("clippy --workspace --all-targets --locked -- -D warnings", workingDirectory: RootDirectory, logger: LogToolOutput);
         });
 
     Target Test => target => target
         .After(Lint)
-        .Executes(() => Cargo("test --workspace --all-targets --locked", workingDirectory: RootDirectory, logger: LogToolOutput));
+        .Executes(() =>
+        {
+            Cargo("test --package zzu --lib --tests --no-default-features --locked", workingDirectory: RootDirectory, logger: LogToolOutput);
+            Cargo("test --package zzu --lib --tests --all-features --locked", workingDirectory: RootDirectory, logger: LogToolOutput);
+            Cargo("test --package zzu --doc --all-features --locked", workingDirectory: RootDirectory, logger: LogToolOutput);
+            Cargo("test --workspace --all-targets --locked", workingDirectory: RootDirectory, logger: LogToolOutput);
+        });
 
     Target Check => target => target
         .DependsOn(Format, Lint, Test);
