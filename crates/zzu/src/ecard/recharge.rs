@@ -123,7 +123,8 @@ impl From<RawPaymentChannel> for PaymentChannel {
 }
 
 /// 向收银台预下单时上报的客户端设备平台。
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PaymentDevice {
     /// Android 平台（默认值）。
     #[default]
@@ -133,16 +134,29 @@ pub enum PaymentDevice {
 }
 
 /// 预下单时上报的付款端环境信息，默认为 [`PaymentDevice::Android`] 与空 IP。
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PaymentContext {
     /// 付款端设备平台。
+    #[serde(default, deserialize_with = "deserialize_payment_device")]
     pub device: PaymentDevice,
     /// 付款端 IP 地址；为 `None` 时按空字符串上报。
+    #[serde(default)]
     pub payer_ip: Option<IpAddr>,
 }
 
+fn deserialize_payment_device<'de, D>(
+    deserializer: D,
+) -> std::result::Result<PaymentDevice, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<PaymentDevice>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// 收银台预下单后返回的第三方支付拉起动作。
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", try_from = "RawPaymentAction")]
 #[non_exhaustive]
 pub enum PaymentAction {
     /// 通过 HTTP `GET` 跳转至第三方支付页面（如微信 H5 支付）。
@@ -157,8 +171,64 @@ pub enum PaymentAction {
         /// 表单提交目标 HTTPS 地址。
         url: Url,
         /// 按原始顺序排列的表单键值对；可能包含同名字段，提交时须保留重复项与顺序。
+        #[serde(serialize_with = "serialize_form_fields")]
         fields: Vec<(String, String)>,
     },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RawPaymentAction {
+    Redirect {
+        url: String,
+        #[serde(default)]
+        referrer: Option<String>,
+    },
+    SubmitForm {
+        url: String,
+        fields: Vec<RawFormField>,
+    },
+}
+
+#[derive(Deserialize, Serialize)]
+struct RawFormField {
+    name: String,
+    value: String,
+}
+
+impl TryFrom<RawPaymentAction> for PaymentAction {
+    type Error = Error;
+
+    fn try_from(raw: RawPaymentAction) -> Result<Self> {
+        match raw {
+            RawPaymentAction::Redirect { url, referrer } => Ok(Self::Redirect {
+                url: web_url(&url)?,
+                referrer: referrer.as_deref().map(web_url).transpose()?,
+            }),
+            RawPaymentAction::SubmitForm { url, fields } => Ok(Self::SubmitForm {
+                url: web_url(&url)?,
+                fields: fields
+                    .into_iter()
+                    .map(|field| (field.name, field.value))
+                    .collect(),
+            }),
+        }
+    }
+}
+
+fn serialize_form_fields<S: serde::Serializer>(
+    fields: &[(String, String)],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    use serde::ser::SerializeSeq;
+    let mut seq = serializer.serialize_seq(Some(fields.len()))?;
+    for (name, value) in fields {
+        seq.serialize_element(&RawFormField {
+            name: name.clone(),
+            value: value.clone(),
+        })?;
+    }
+    seq.end()
 }
 
 impl fmt::Debug for PaymentAction {
@@ -732,18 +802,37 @@ mod tests {
                 </form><script>document.forms[0].submit()</script>"#,
         })).unwrap();
         assert!(!format!("{action:?}").contains("test-signature"));
-        let PaymentAction::SubmitForm { url, fields } = action else {
+        let PaymentAction::SubmitForm { url, fields } = &action else {
             panic!("expected form")
         };
         assert_eq!(url.host_str(), Some("openapi.alipay.com"));
         assert_eq!(url.query(), Some("sign=test-signature"));
         assert_eq!(
-            fields,
+            fields.as_slice(),
             [
                 ("biz_content".into(), r#"{"subject":"A&B"}"#.into()),
                 ("duplicate".into(), "first".into()),
                 ("duplicate".into(), "second".into()),
             ]
+        );
+        let encoded_action = serde_json::to_value(&action).unwrap();
+        assert_eq!(encoded_action["kind"], "submit_form");
+        assert_eq!(
+            encoded_action["fields"],
+            json!([
+                {"name": "biz_content", "value": r#"{"subject":"A&B"}"#},
+                {"name": "duplicate", "value": "first"},
+                {"name": "duplicate", "value": "second"},
+            ])
+        );
+        let restored_action: PaymentAction = serde_json::from_value(encoded_action).unwrap();
+        assert_eq!(restored_action, action);
+        assert!(
+            serde_json::from_value::<PaymentAction>(json!({
+                "kind": "redirect",
+                "url": "http://insecure.example/pay"
+            }))
+            .is_err()
         );
         assert!(
             payment_form(r#"<form method="post" action="javascript:alert(1)"></form>"#).is_err()
@@ -757,11 +846,28 @@ mod tests {
             "mweb_url": "https://wx.tenpay.com/cgi-bin/mmpayweb-bin/checkmweb?prepay_id=test-secret",
         }).to_string())).unwrap();
         assert!(!format!("{action:?}").contains("test-secret"));
-        let PaymentAction::Redirect { url, referrer } = action else {
+        let PaymentAction::Redirect { url, referrer } = &action else {
             panic!("expected redirect")
         };
         assert_eq!(url.host_str(), Some("wx.tenpay.com"));
-        assert_eq!(referrer.unwrap().as_str(), "https://payment.v.zzu.edu.cn/");
+        assert_eq!(
+            referrer.as_ref().unwrap().as_str(),
+            "https://payment.v.zzu.edu.cn/"
+        );
+        let encoded_redirect = serde_json::to_value(&action).unwrap();
+        assert_eq!(encoded_redirect["kind"], "redirect");
+        let restored_redirect: PaymentAction = serde_json::from_value(encoded_redirect).unwrap();
+        assert_eq!(restored_redirect, action);
+
+        let context: PaymentContext = serde_json::from_value(json!({
+            "device": "ios",
+            "payerIp": "10.1.2.3"
+        }))
+        .unwrap();
+        assert_eq!(context.device, PaymentDevice::Ios);
+        let null_device: PaymentContext = serde_json::from_value(json!({"device": null})).unwrap();
+        assert_eq!(null_device, PaymentContext::default());
+        assert!(serde_json::from_value::<PaymentContext>(json!({"extra": 1})).is_err());
         assert!(
             payment_action(json!({"request_type": "unknown"}))
                 .unwrap_err()
@@ -777,7 +883,10 @@ mod tests {
                 .unwrap_err()
                 .is_decode()
         );
+    }
 
+    #[test]
+    fn recharge_config_parses_amounts_validates_pay_code_and_roundtrips() {
         let config_context = Arc::new(crate::RequestContext {
             method: "POST".into(),
             url: format!("{ECARD_URL}/recharge/config"),

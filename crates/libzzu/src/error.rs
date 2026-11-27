@@ -46,8 +46,6 @@ pub(crate) enum FfiError {
     InvalidInput(String),
     #[error("未知方法：{0}")]
     UnknownMethod(String),
-    #[error("无法识别付款动作，请更新链接库版本")]
-    UnsupportedPaymentAction,
     #[error("运行环境初始化失败")]
     Runtime(#[from] std::io::Error),
     #[error("操作超过 {} 毫秒总时限", .0.as_millis())]
@@ -80,7 +78,6 @@ impl FfiError {
             },
             Self::InvalidInput(_) => ZZU_INVALID_INPUT,
             Self::UnknownMethod(_) => ZZU_UNKNOWN_METHOD,
-            Self::UnsupportedPaymentAction => ZZU_DECODE_ERROR,
             Self::Runtime(_) => ZZU_RUNTIME_ERROR,
             Self::Timeout(_) => ZZU_TIMEOUT,
             Self::Cancelled => ZZU_CANCELLED,

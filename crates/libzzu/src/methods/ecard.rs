@@ -1,13 +1,10 @@
-use std::{
-    ffi::{c_char, c_void},
-    net::IpAddr,
-};
+use std::ffi::{c_char, c_void};
 
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 use zzu::ecard::{
-    EcardClient, PaymentAction, PaymentChannel, PaymentContext, PaymentDevice, RechargeOrder,
-    RoomId, TransactionKind, TransactionQuery,
+    EcardClient, PaymentChannel, PaymentContext, RechargeOrder, RoomId, TransactionKind,
+    TransactionQuery,
 };
 
 use super::{Guarded, ZzuCasClient, done, parse, reply};
@@ -115,83 +112,12 @@ struct CheckoutUrl {
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Device {
-    Android,
-    Ios,
-}
-
-impl From<Device> for PaymentDevice {
-    fn from(device: Device) -> Self {
-        match device {
-            Device::Android => Self::Android,
-            Device::Ios => Self::Ios,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Context {
-    device: Option<Device>,
-    payer_ip: Option<IpAddr>,
-}
-
-impl From<Context> for PaymentContext {
-    fn from(context: Context) -> Self {
-        Self {
-            device: context.device.map(Into::into).unwrap_or_default(),
-            payer_ip: context.payer_ip,
-        }
-    }
-}
-
-#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreparePayment {
     order: RechargeOrder,
     channel: ChannelInput,
-    context: Option<Context>,
-}
-
-#[derive(Serialize)]
-struct FormField {
-    name: String,
-    value: String,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum PaymentActionReply {
-    Redirect {
-        url: String,
-        referrer: Option<String>,
-    },
-    SubmitForm {
-        url: String,
-        fields: Vec<FormField>,
-    },
-}
-
-impl TryFrom<PaymentAction> for PaymentActionReply {
-    type Error = FfiError;
-
-    fn try_from(action: PaymentAction) -> FfiResult<Self> {
-        match action {
-            PaymentAction::Redirect { url, referrer } => Ok(Self::Redirect {
-                url: url.into(),
-                referrer: referrer.map(Into::into),
-            }),
-            PaymentAction::SubmitForm { url, fields } => Ok(Self::SubmitForm {
-                url: url.into(),
-                fields: fields
-                    .into_iter()
-                    .map(|(name, value)| FormField { name, value })
-                    .collect(),
-            }),
-            _ => Err(FfiError::UnsupportedPaymentAction),
-        }
-    }
+    #[serde(default)]
+    context: Option<PaymentContext>,
 }
 
 impl Service for Guarded<EcardClient> {
@@ -263,13 +189,12 @@ impl Service for Guarded<EcardClient> {
                     channel,
                     context,
                 } = parse(params)?;
-                let context = context.map(PaymentContext::from);
                 let action = self
                     .read()
                     .await?
                     .prepare_payment(&order, &channel.into(), context.as_ref())
                     .await?;
-                reply(&PaymentActionReply::try_from(action)?)
+                reply(&action)
             }
             _ => Err(FfiError::UnknownMethod(method.into())),
         }
@@ -428,8 +353,7 @@ pub unsafe extern "C" fn zzu_ecard_call_blocking(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-
-    use super::*;
+    use zzu::ecard::PaymentAction;
 
     #[test]
     fn payment_form_preserves_duplicate_fields_and_order() {
@@ -441,7 +365,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            serde_json::to_value(PaymentActionReply::try_from(action).unwrap()).unwrap(),
+            serde_json::to_value(&action).unwrap(),
             json!({
                 "kind": "submit_form",
                 "url": "https://example.test/pay",
