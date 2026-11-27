@@ -11,7 +11,7 @@ use std::{
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use jiff::Timestamp;
 use reqwest::{Client, Url};
-use rsa::RsaPublicKey;
+use rsa::PublicKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -203,7 +203,7 @@ impl MfaState {
 }
 
 struct Session {
-    key: Option<RsaPublicKey>,
+    key: Option<PublicKey>,
     tokens: Option<Tokens>,
     is_logged_in: bool,
     mfa: MfaState,
@@ -423,7 +423,7 @@ impl CasClient {
         Ok(())
     }
 
-    async fn public_key<'a>(&self, session: &'a mut Session) -> Result<&'a RsaPublicKey> {
+    async fn public_key<'a>(&self, session: &'a mut Session) -> Result<&'a PublicKey> {
         if session.key.is_none() {
             let request = self
                 .inner

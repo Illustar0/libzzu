@@ -4,28 +4,26 @@ use base64::{
 };
 use ecb::cipher::{BlockModeDecrypt, KeyInit, block_padding::Pkcs7};
 use rand::Rng;
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey};
+use rsa::{Pkcs1v15Encrypt, PublicKey, pkcs1::DecodeRsaPublicKey, pkcs8::DecodePublicKey};
 use serde::Deserialize;
 use sm2::{elliptic_curve::common::getrandom::SysRng, pke::EncryptingKey};
 
 use crate::{Error, Result};
 
-pub(crate) fn rsa_key(text: &str) -> Result<RsaPublicKey> {
+pub(crate) fn rsa_key(text: &str) -> Result<PublicKey> {
     let pem = pem::parse(text).map_err(Error::crypto_source)?;
     match pem.tag() {
         "PUBLIC KEY" => {
-            RsaPublicKey::from_public_key_der(pem.contents()).map_err(Error::crypto_source)
+            PublicKey::from_public_key_der(pem.contents()).map_err(Error::crypto_source)
         }
-        "RSA PUBLIC KEY" => {
-            RsaPublicKey::from_pkcs1_der(pem.contents()).map_err(Error::crypto_source)
-        }
+        "RSA PUBLIC KEY" => PublicKey::from_pkcs1_der(pem.contents()).map_err(Error::crypto_source),
         _ => Err(Error::crypto("不支持的 RSA 公钥 PEM 标签".into())),
     }
 }
 
-pub(crate) fn rsa_encrypt(key: &RsaPublicKey, text: &str) -> Result<String> {
+pub(crate) fn rsa_encrypt(key: &PublicKey, text: &str) -> Result<String> {
     let encrypted = key
-        .encrypt(&mut rand::rngs::OsRng, Pkcs1v15Encrypt, text.as_bytes())
+        .encrypt(&mut SysRng, Pkcs1v15Encrypt, text.as_bytes())
         .map_err(Error::crypto_source)?;
     Ok(format!("__RSA__{}", STANDARD.encode(encrypted)))
 }

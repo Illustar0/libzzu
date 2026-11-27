@@ -22,7 +22,7 @@ pem = "4"
 rand = "0.8"
 regex = { version = "1", default-features = false, features = ["std", "unicode-perl"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "cookies", "json", "query", "form", "charset", "gzip"] }
-rsa = "0.9"
+rsa = { version = "0.10", features = ["pkcs1v15"] }
 rust_decimal = { version = "1.43", default-features = false, features = ["std", "serde"] }
 scraper = "0.29"
 serde = { version = "1", features = ["derive"] }
