@@ -1,6 +1,7 @@
 //! 统一身份认证（CAS）会话管理、短信多因素认证、设备信任管理、个人信息与头像查询以及业务系统单点登录。
 
 use std::{
+    fmt,
     future::{Future, poll_fn},
     sync::Arc,
     task::Poll,
@@ -106,16 +107,40 @@ impl UndergradEasService {
 }
 
 /// 统一身份认证签发的用户令牌与刷新令牌对。
-#[derive(Clone, Deserialize, Serialize)]
+///
+/// 序列化结果包含会话凭据，切勿写入日志（[`fmt::Debug`] 实现已隐藏令牌明文）。
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tokens {
-    /// 访问各业务系统的用户 JWT（有效期约 1 个月；反序列化时兼容 `idToken` 字段名）。
-    #[serde(alias = "idToken")]
+    /// 访问各业务系统的用户 JWT（有效期约 1 个月）。
     pub user_token: String,
     /// 登录时一并签发的长效刷新 JWT（有效期约 2 个月）。
     ///
     /// 本库仅在预置或复用令牌时校验其尚未过期，并原样保留供外部持久化，不会调用刷新接口自动续期。
     pub refresh_token: String,
+}
+
+impl fmt::Debug for Tokens {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("Tokens").finish_non_exhaustive()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawTokens {
+    #[serde(alias = "userToken")]
+    id_token: String,
+    refresh_token: String,
+}
+
+impl From<RawTokens> for Tokens {
+    fn from(raw: RawTokens) -> Self {
+        Self {
+            user_token: raw.id_token,
+            refresh_token: raw.refresh_token,
+        }
+    }
 }
 
 impl Tokens {
@@ -140,7 +165,7 @@ impl Tokens {
 }
 
 /// 当前会话的多因素认证（MFA）检测与校验状态。
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MfaStatus {
     /// 当前设备与账号登录是否需要多因素认证。
@@ -381,8 +406,8 @@ impl CasClient {
             }
         };
         let context = response.context.clone();
-        let tokens: Tokens = match http::data(response, "code") {
-            Ok(tokens) => tokens,
+        let tokens: Tokens = match http::data::<RawTokens>(response, "code") {
+            Ok(tokens) => tokens.into(),
             Err(error) => {
                 session.mfa = MfaState::default();
                 return Err(password_login_error(error));
@@ -1031,12 +1056,46 @@ mod tests {
             "e30.{}.c2ln",
             URL_SAFE_NO_PAD.encode(json!({"exp": Timestamp::now().as_second() + 3600}).to_string())
         );
-        cas.set_tokens(Tokens {
+        let expected = Tokens {
             user_token: token.clone(),
             refresh_token: token.clone(),
-        })
-        .await
+        };
+        assert!(!format!("{expected:?}").contains(&token));
+        let encoded_tokens = serde_json::to_value(&expected).unwrap();
+        assert_eq!(
+            encoded_tokens,
+            json!({"userToken": token, "refreshToken": token})
+        );
+        assert_eq!(
+            serde_json::from_value::<Tokens>(encoded_tokens).unwrap(),
+            expected
+        );
+        assert!(
+            serde_json::from_value::<Tokens>(json!({
+                "idToken": token,
+                "refreshToken": token,
+            }))
+            .is_err()
+        );
+        let raw_tokens: RawTokens = serde_json::from_value(json!({
+            "idToken": token,
+            "refreshToken": token,
+        }))
         .unwrap();
+        assert_eq!(Tokens::from(raw_tokens), expected);
+
+        let mfa = MfaStatus {
+            is_required: true,
+            can_use_sms: true,
+            is_verified: false,
+        };
+        assert_eq!(
+            serde_json::from_value::<MfaStatus>(serde_json::to_value(mfa).unwrap()).unwrap(),
+            mfa
+        );
+
+        cas.set_tokens(expected.clone()).await.unwrap();
+        assert_eq!(other.tokens().await, Some(expected));
         assert!(other.user_token().await.unwrap_err().is_not_authenticated());
         cas.login().await.unwrap();
         assert_eq!(other.user_token().await.unwrap(), token);

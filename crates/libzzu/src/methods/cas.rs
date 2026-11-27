@@ -56,6 +56,23 @@ struct ServiceSso {
     service: Service,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetTokens {
+    #[serde(alias = "idToken")]
+    user_token: String,
+    refresh_token: String,
+}
+
+impl From<SetTokens> for Tokens {
+    fn from(tokens: SetTokens) -> Self {
+        Self {
+            user_token: tokens.user_token,
+            refresh_token: tokens.refresh_token,
+        }
+    }
+}
+
 impl ClientService for CasClient {
     async fn call(&self, method: &str, params: &[u8]) -> FfiResult<Vec<u8>> {
         match method {
@@ -74,7 +91,8 @@ impl ClientService for CasClient {
             "is_logged_in" => reply(&self.is_logged_in().await),
             "device_id" => reply(self.device_id()),
             "set_tokens" => {
-                self.set_tokens(parse::<Tokens>(params)?).await?;
+                let tokens: SetTokens = parse(params)?;
+                self.set_tokens(tokens.into()).await?;
                 done()
             }
             "tokens" => reply(&self.tokens().await),
