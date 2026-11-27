@@ -85,8 +85,10 @@ impl Timetable {
             .filter(|name| !name.is_empty())
             .unwrap_or(&self.semester.name_zh);
 
-        let mut calendar = Calendar::new();
+        let mut calendar = Calendar::empty();
+        calendar.append_property(("VERSION", "2.0"));
         calendar.append_property(("PRODID", "-//libzzu//Teaching Schedule//CN"));
+        calendar.append_property(("CALSCALE", "GREGORIAN"));
         calendar.append_property(("X-WR-CALNAME", cal_name));
         calendar.append_property(("X-WR-TIMEZONE", "Asia/Shanghai"));
 
@@ -354,6 +356,13 @@ mod tests {
         let ics = timetable.to_calendar(&options).unwrap().to_string();
         // 按 RFC 5545 3.1 节展开 75 字节折行，再断言逻辑内容。
         let unfolded = ics.replace("\r\n ", "");
+        assert_eq!(unfolded.matches("\r\nVERSION:").count(), 1);
+        assert_eq!(unfolded.matches("\r\nPRODID:").count(), 1);
+        assert_eq!(unfolded.matches("\r\nCALSCALE:").count(), 1);
+        assert!(unfolded.contains("\r\nVERSION:2.0\r\n"));
+        assert!(unfolded.contains("\r\nPRODID:-//libzzu//Teaching Schedule//CN\r\n"));
+        assert!(unfolded.contains("\r\nCALSCALE:GREGORIAN\r\n"));
+        assert!(!unfolded.contains("ICALENDAR-RS"));
         assert_eq!(unfolded.matches("BEGIN:VEVENT").count(), 2);
         assert_eq!(unfolded.matches("BEGIN:VALARM").count(), 2);
         assert!(unfolded.contains("X-WR-CALNAME:2026-2027学年第一学期"));
