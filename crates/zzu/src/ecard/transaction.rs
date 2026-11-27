@@ -35,13 +35,15 @@ impl TransactionKind {
 }
 
 /// 校园卡账单流水筛选条件（起止日期均含当日）。
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TransactionQuery {
     /// 查询起始公历日期（含当日）。
     pub start_date: Date,
     /// 查询截止公历日期（含当日）。
     pub end_date: Date,
     /// 交易类别筛选；为 `None` 时查询全部类别（消费、充值与补助）。
+    #[serde(default)]
     pub kind: Option<TransactionKind>,
 }
 
@@ -58,20 +60,15 @@ impl TransactionQuery {
 }
 
 /// 校园卡单笔交易账单记录。
-///
-/// 反序列化时同时兼容上游接口原始字段（`journo`、北京时间 `YYYY-MM-DD HH:MM:SS` 的 `date`、
-/// `amt`、字符串 `"0"`/`"1"` 的 `isRefund`）与本库序列化的标准 `camelCase` / RFC 9557 JSON 格式。
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
-    /// 校园卡交易流水号（映射自上游 `journo`）。
-    #[serde(alias = "journo")]
+    /// 校园卡交易流水号。
     pub id: String,
     /// 交易发生时间（`Asia/Shanghai` 时区）。
-    #[serde(alias = "date", deserialize_with = "deserialize_transaction_time")]
     pub time: Zoned,
     /// 交易金额（单位：元；消费通常为负数，充值与补助通常为正数）。
-    #[serde(alias = "amt", deserialize_with = "crate::money::deserialize_decimal")]
+    #[serde(deserialize_with = "crate::money::deserialize_decimal")]
     pub amount: Decimal,
     /// 交易商户或入账渠道名称（如食堂档口、主校区电控、微信支付转账充值）。
     #[serde(default)]
@@ -80,8 +77,37 @@ pub struct Transaction {
     #[serde(default)]
     pub summary: String,
     /// 是否为退款记录。
-    #[serde(default, deserialize_with = "deserialize_refund_flag")]
+    #[serde(default)]
     pub is_refund: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawTransaction {
+    journo: String,
+    #[serde(deserialize_with = "deserialize_transaction_time")]
+    date: Zoned,
+    #[serde(deserialize_with = "crate::money::deserialize_decimal")]
+    amt: Decimal,
+    #[serde(default)]
+    merchant_name: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_refund_flag")]
+    is_refund: bool,
+}
+
+impl From<RawTransaction> for Transaction {
+    fn from(raw: RawTransaction) -> Self {
+        Self {
+            id: raw.journo,
+            time: raw.date,
+            amount: raw.amt,
+            merchant_name: raw.merchant_name.unwrap_or_default().trim().to_owned(),
+            summary: raw.summary.unwrap_or_default().trim().to_owned(),
+            is_refund: raw.is_refund,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -155,8 +181,12 @@ fn build_trade_list_request(
 }
 
 fn parse_transactions_response(response: http::JsonResponse) -> Result<Vec<Transaction>> {
-    let items: Option<Vec<Transaction>> = http::ecard_data(response)?;
-    Ok(items.unwrap_or_default())
+    let items: Option<Vec<RawTransaction>> = http::ecard_data(response)?;
+    Ok(items
+        .unwrap_or_default()
+        .into_iter()
+        .map(Transaction::from)
+        .collect())
 }
 
 fn deserialize_transaction_time<'de, D>(deserializer: D) -> std::result::Result<Zoned, D::Error>
@@ -225,6 +255,11 @@ mod tests {
         let start: Date = "2026-11-01".parse().unwrap();
         let end: Date = "2026-11-27".parse().unwrap();
         let query = TransactionQuery::new(start, end);
+        assert_eq!(
+            serde_json::from_value::<TransactionQuery>(serde_json::to_value(&query).unwrap())
+                .unwrap(),
+            query
+        );
 
         let default_req = build_trade_list_request(&query, 1, None).unwrap();
         assert_eq!(
@@ -287,8 +322,8 @@ mod tests {
                     "journo": "1442787548706373664"
                 },
                 {
-                    "summary": "移动端交易",
-                    "merchantName": "微信支付转账充值",
+                    "summary": " 移动端交易 ",
+                    "merchantName": null,
                     "date": "2026-11-25 14:18:22",
                     "amt": "50.00",
                     "isRefund": "1",
@@ -309,6 +344,8 @@ mod tests {
         assert_eq!(transactions[0].merchant_name, "主校区电控");
         assert!(!transactions[0].is_refund);
         assert!(transactions[1].is_refund);
+        assert_eq!(transactions[1].merchant_name, "");
+        assert_eq!(transactions[1].summary, "移动端交易");
 
         let serialized = serde_json::to_value(&transactions[0]).unwrap();
         assert_eq!(
@@ -324,6 +361,15 @@ mod tests {
         );
         let roundtripped: Transaction = serde_json::from_value(serialized).unwrap();
         assert_eq!(roundtripped, transactions[0]);
+        assert!(
+            serde_json::from_value::<Transaction>(json!({
+                "journo": "1",
+                "date": "2026-11-25 16:02:37",
+                "amt": "-60.00",
+                "isRefund": "0",
+            }))
+            .is_err()
+        );
 
         let null_data = trade_list_response(json!({
             "success": true,
