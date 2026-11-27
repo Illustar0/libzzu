@@ -404,8 +404,8 @@ fn parse_unread_count_response(response: http::Response) -> Result<CoremailOutco
             Error::decode_message("邮箱文件夹响应缺少 var 字段".into())
                 .with_request(context.clone())
         })?;
-        let folders: Vec<Folder> = Vec::deserialize(folders_value)
-            .map_err(|error| Error::from(error).with_request(context.clone()))?;
+        let folders: Vec<Folder> = http::deserialize_value_ref(folders_value, Some("var"))
+            .map_err(|error| error.with_request(context.clone()))?;
         let inbox = folders
             .into_iter()
             .find(|folder| folder.id == INBOX_FOLDER_ID)
@@ -470,8 +470,8 @@ fn parse_messages_response(
         let var_value = value.get("var").ok_or_else(|| {
             Error::decode_message("邮件列表响应缺少 var 字段".into()).with_request(context.clone())
         })?;
-        let raw_items: Vec<RawMailMessage> = Vec::deserialize(var_value)
-            .map_err(|error| Error::from(error).with_request(context.clone()))?;
+        let raw_items: Vec<RawMailMessage> = http::deserialize_value_ref(var_value, Some("var"))
+            .map_err(|error| error.with_request(context.clone()))?;
 
         let mut items = Vec::with_capacity(raw_items.len());
         for raw in raw_items {

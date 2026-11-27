@@ -604,7 +604,7 @@ fn parse_jsonp<T: serde::de::DeserializeOwned>(text: &str) -> Result<T> {
     let json = body
         .strip_suffix(')')
         .ok_or_else(|| Error::decode_message("JSONP 缺少闭合括号".into()))?;
-    Ok(serde_json::from_str(json)?)
+    http::deserialize_str(json)
 }
 
 /// 通过 UDP 路由表查询本机前往 `target` 时选用的本地网卡 IP 地址（不实际发送数据包）。

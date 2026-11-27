@@ -26,6 +26,7 @@ rust_decimal.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_path_to_error.workspace = true
 sm2.workspace = true
 sm4.workspace = true
 thiserror.workspace = true

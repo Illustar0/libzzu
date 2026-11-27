@@ -1,4 +1,4 @@
-use std::{future::Future, ops::Deref, sync::Arc};
+use std::{fmt, future::Future, ops::Deref, sync::Arc};
 
 use reqwest::{
     Certificate, Client, ClientBuilder, RequestBuilder, StatusCode, Url, header::HeaderMap,
@@ -215,11 +215,6 @@ impl Response {
         }
         self.require_success()
     }
-
-    pub fn decode<T: DeserializeOwned>(self) -> Result<T> {
-        serde_json::from_str(self.body())
-            .map_err(|error| Error::from(error).with_request(self.context))
-    }
 }
 
 impl BytesResponse {
@@ -271,17 +266,20 @@ impl JsonResponse {
     }
 
     pub fn decode<T: DeserializeOwned>(self) -> Result<T> {
-        serde_json::from_value(self.value)
-            .map_err(|error| Error::from(error).with_request(self.context))
+        deserialize_value(self.value, None).map_err(|error| error.with_request(self.context))
     }
 }
 
 pub(crate) async fn json(request: RequestBuilder) -> Result<JsonResponse> {
-    let response = send(request).await?.require_success()?;
-    let context = response.context.clone();
+    parse_json_response(send(request).await?.require_success()?)
+}
+
+fn parse_json_response(response: Response) -> Result<JsonResponse> {
+    let value = serde_json::from_str(response.body())
+        .map_err(|error| Error::from(error).with_request(response.context.clone()))?;
     Ok(JsonResponse {
-        value: response.decode()?,
-        context,
+        value,
+        context: response.context,
     })
 }
 
@@ -340,8 +338,68 @@ fn decode_field<T: DeserializeOwned>(mut response: JsonResponse, key: &str) -> R
         Error::decode_message(format!("服务器响应缺少 {key}"))
             .with_request(response.context.clone())
     })?;
-    serde_json::from_value(field.take())
-        .map_err(|error| Error::from(error).with_request(response.context))
+    deserialize_value(field.take(), Some(key)).map_err(|error| error.with_request(response.context))
+}
+
+#[derive(Debug)]
+struct PathDecodeError {
+    path: String,
+    source: serde_json::Error,
+}
+
+impl fmt::Display for PathDecodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.path, self.source)
+    }
+}
+
+impl std::error::Error for PathDecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.source()
+    }
+}
+
+pub(crate) fn deserialize_str<T: DeserializeOwned>(text: &str) -> Result<T> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    serde_path_to_error::deserialize(&mut deserializer).map_err(|err| into_path_error(err, None))
+}
+
+pub(crate) fn deserialize_value<T: DeserializeOwned>(
+    value: Value,
+    root: Option<&str>,
+) -> Result<T> {
+    serde_path_to_error::deserialize(value).map_err(|err| into_path_error(err, root))
+}
+
+pub(crate) fn deserialize_value_ref<T: DeserializeOwned>(
+    value: &Value,
+    root: Option<&str>,
+) -> Result<T> {
+    serde_path_to_error::deserialize(value).map_err(|err| into_path_error(err, root))
+}
+
+fn into_path_error(
+    err: serde_path_to_error::Error<serde_json::Error>,
+    root: Option<&str>,
+) -> Error {
+    let has_segments = err.path().iter().next().is_some();
+    let path = match (root.filter(|name| !name.is_empty()), has_segments) {
+        (None, false) => return Error::from(err.into_inner()),
+        (None, true) => err.path().to_string(),
+        (Some(root), false) => root.to_owned(),
+        (Some(root), true) => {
+            let relative = err.path().to_string();
+            if relative.starts_with('[') {
+                format!("{root}{relative}")
+            } else {
+                format!("{root}.{relative}")
+            }
+        }
+    };
+    Error::decode(PathDecodeError {
+        path,
+        source: err.into_inner(),
+    })
 }
 
 pub(crate) fn message(value: &Value) -> String {
@@ -416,7 +474,9 @@ mod tests {
             error.request().unwrap().response_body.as_deref(),
             Some(body)
         );
-        let error = response(200, "invalid JSON").decode::<Value>().unwrap_err();
+        let error = parse_json_response(response(200, "invalid JSON"))
+            .err()
+            .unwrap();
         assert!(error.is_decode());
         assert!(error.source().unwrap().is::<serde_json::Error>());
         let response = JsonResponse {
@@ -453,6 +513,38 @@ mod tests {
         assert_eq!(
             scalar_error_code(&json!({"code": 401}), "code").as_deref(),
             Some("401")
+        );
+    }
+
+    #[test]
+    fn decode_failures_include_json_field_paths_in_error_source() {
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct GradeItem {
+            #[expect(dead_code)]
+            sub_grades: Vec<SubItem>,
+        }
+        #[derive(serde::Deserialize)]
+        struct SubItem {
+            #[expect(dead_code)]
+            id: i64,
+        }
+        let nested_bad = JsonResponse {
+            value: json!({
+                "result": 0,
+                "data": [
+                    {"subGrades": [{"id": 1}]},
+                    {"subGrades": [{"id": null}]}
+                ]
+            }),
+            context: response(200, "{}").context,
+        };
+        let err = data::<Vec<GradeItem>>(nested_bad, "result").err().unwrap();
+        assert!(err.is_decode());
+        let path_err = err.source().unwrap().to_string();
+        assert!(
+            path_err.starts_with("data[1].subGrades[0].id: invalid type: null, expected i64"),
+            "unexpected path error: {path_err}"
         );
     }
 }
