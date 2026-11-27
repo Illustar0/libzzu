@@ -128,7 +128,7 @@ impl FfiError {
             kind: self.kind(),
             message: self.to_string(),
             cause: self.cause(),
-            request: request.map(RequestPayload::from),
+            request,
         })
         .unwrap_or_default()
     }
@@ -140,27 +140,5 @@ struct ErrorPayload<'a> {
     kind: Option<&'static str>,
     message: String,
     cause: Option<String>,
-    request: Option<RequestPayload<'a>>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RequestPayload<'a> {
-    method: &'a str,
-    url: &'a str,
-    status_code: Option<u16>,
-    error_code: Option<&'a str>,
-    response_body: Option<&'a str>,
-}
-
-impl<'a> From<&'a RequestContext> for RequestPayload<'a> {
-    fn from(context: &'a RequestContext) -> Self {
-        Self {
-            method: &context.method,
-            url: &context.url,
-            status_code: context.status_code,
-            error_code: context.error_code.as_deref(),
-            response_body: context.response_body.as_deref(),
-        }
-    }
+    request: Option<&'a RequestContext>,
 }

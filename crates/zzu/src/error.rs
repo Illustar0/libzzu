@@ -1,6 +1,6 @@
 use std::{error::Error as StdError, fmt, sync::Arc};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 统一错误类型为 [`Error`] 的 `Result` 别名。
 pub type Result<T> = std::result::Result<T, Error>;
@@ -9,17 +9,21 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// 为避免泄露敏感凭据，`url` 已预先剥离查询参数、片段与用户信息；
 /// [`fmt::Debug`] 实现仅输出响应体字节长度，不打印完整正文。
-#[derive(Clone, Serialize)]
+#[derive(Clone, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RequestContext {
     /// HTTP 请求方法（如 `"GET"`、`"POST"`）。
     pub method: String,
     /// 已脱敏的请求目标 URL（不含查询参数、片段与认证凭据）。
     pub url: String,
     /// 收到的 HTTP 状态码；若请求在建立连接或等待响应阶段失败则为 `None`。
+    #[serde(default)]
     pub status_code: Option<u16>,
     /// 从响应 JSON 中提取的业务错误码文本（如 `code`、`result` 或 `returncode` 字段）。
+    #[serde(default)]
     pub error_code: Option<String>,
     /// 原始响应体文本；在读取响应体前即失败时为 `None`。
+    #[serde(default)]
     pub response_body: Option<String>,
 }
 
@@ -490,5 +494,43 @@ impl Serialize for Error {
         state.serialize_field("message", &self.to_string())?;
         state.serialize_field("context", &self.request())?;
         state.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn request_context_serializes_camel_case_roundtrips_and_redacts_debug_body() {
+        let context = RequestContext {
+            method: "POST".into(),
+            url: "https://example.test/api".into(),
+            status_code: Some(401),
+            error_code: Some("E_AUTH".into()),
+            response_body: Some("sensitive-response-body".into()),
+        };
+        assert!(!format!("{context:?}").contains("sensitive-response-body"));
+
+        let encoded = serde_json::to_value(&context).unwrap();
+        assert_eq!(
+            encoded,
+            json!({
+                "method": "POST",
+                "url": "https://example.test/api",
+                "statusCode": 401,
+                "errorCode": "E_AUTH",
+                "responseBody": "sensitive-response-body",
+            })
+        );
+        let restored: RequestContext = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(restored, context);
+
+        let error = Error::remote("拒绝访问".into()).with_request(Arc::new(context));
+        let encoded_error = serde_json::to_value(&error).unwrap();
+        assert_eq!(encoded_error["code"], "remote");
+        assert_eq!(encoded_error["context"], encoded);
     }
 }
