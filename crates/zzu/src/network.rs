@@ -9,7 +9,7 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use encoding_rs::GBK;
-use jiff::{Timestamp, Zoned, civil::DateTime};
+use jiff::{Timestamp, ZonedDateTime, civil::DateTime};
 use regex::Regex;
 use reqwest::{
     Client, Url,
@@ -656,7 +656,7 @@ pub struct OnlineDevice {
     /// 终端分配的内网 IP 地址文本。
     pub ip: String,
     /// 终端登录时间（`Asia/Shanghai` 时区）。
-    pub login_time: Zoned,
+    pub login_time: ZonedDateTime,
     /// 终端 MAC 地址文本。
     pub mac: String,
     /// 在线会话唯一标识（可用于 [`SelfServiceClient::kick_device`] 强制下线）。
@@ -681,7 +681,7 @@ struct RawOnlineDevice {
     host_name: Option<String>,
     ip: String,
     #[serde(deserialize_with = "deserialize_login_time")]
-    login_time: Zoned,
+    login_time: ZonedDateTime,
     mac: String,
     session_id: String,
     terminal_type: String,
@@ -709,13 +709,13 @@ impl From<RawOnlineDevice> for OnlineDevice {
     }
 }
 
-fn deserialize_login_time<'de, D>(deserializer: D) -> std::result::Result<Zoned, D::Error>
+fn deserialize_login_time<'de, D>(deserializer: D) -> std::result::Result<ZonedDateTime, D::Error>
 where
     D: Deserializer<'de>,
 {
     let text = String::deserialize(deserializer)?;
     let trimmed = text.trim();
-    if let Ok(zoned) = trimmed.parse::<Zoned>() {
+    if let Ok(zoned) = trimmed.parse::<ZonedDateTime>() {
         return Ok(zoned);
     }
     DateTime::strptime("%Y-%m-%d %H:%M:%S", trimmed)

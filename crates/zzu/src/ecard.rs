@@ -7,7 +7,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use jiff::{Timestamp, tz::TimeZone};
+use jiff::Timestamp;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -378,7 +378,8 @@ impl EcardClient {
     /// 申请 `/utilities/pay`、`/recharge/pay` 等扣款接口请求头 `transactionId` 所需的一次性交易号。
     async fn transaction_id(&self, token: &str) -> Result<String> {
         let datetime = Timestamp::now()
-            .to_zoned(TimeZone::get("Asia/Shanghai").map_err(Error::decode)?)
+            .in_tz("Asia/Shanghai")
+            .map_err(Error::decode)?
             .strftime("%F %T")
             .to_string();
         let response = http::json(

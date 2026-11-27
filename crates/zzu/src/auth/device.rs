@@ -1,4 +1,4 @@
-use jiff::{Timestamp, Zoned};
+use jiff::{Timestamp, ZonedDateTime};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -54,13 +54,13 @@ pub struct LoginDevice {
     pub used_count: u32,
     /// 首次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
     #[serde(default)]
-    pub first_used_time: Option<Zoned>,
+    pub first_used_time: Option<ZonedDateTime>,
     /// 最近一次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
     #[serde(default)]
-    pub last_used_time: Option<Zoned>,
+    pub last_used_time: Option<ZonedDateTime>,
     /// 上一次登录时间（`Asia/Shanghai` 时区；未记录时为 `None`）。
     #[serde(default)]
-    pub previous_used_time: Option<Zoned>,
+    pub previous_used_time: Option<ZonedDateTime>,
 }
 
 #[derive(Deserialize)]
@@ -205,7 +205,7 @@ fn parse_optional_authx_time(
     value: Option<String>,
     index: usize,
     field: &str,
-) -> Result<Option<Zoned>> {
+) -> Result<Option<ZonedDateTime>> {
     clean_optional_text(value)
         .as_deref()
         .map(|text| {
@@ -215,9 +215,9 @@ fn parse_optional_authx_time(
         .transpose()
 }
 
-fn parse_authx_time(text: &str, field: &str) -> Result<Zoned> {
+fn parse_authx_time(text: &str, field: &str) -> Result<ZonedDateTime> {
     let trimmed = text.trim();
-    if let Ok(zoned) = trimmed.parse::<Zoned>() {
+    if let Ok(zoned) = trimmed.parse::<ZonedDateTime>() {
         return Ok(zoned);
     }
     trimmed

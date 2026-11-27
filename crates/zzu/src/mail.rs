@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use jiff::{Timestamp, Zoned, civil::DateTime};
+use jiff::{Timestamp, ZonedDateTime, civil::DateTime};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -58,9 +58,9 @@ pub struct MailMessage {
     pub summary: Option<String>,
     /// 发信头声明的发送时间（`Asia/Shanghai` 时区；缺失或格式无法识别时为 `None`）。
     #[serde(default)]
-    pub sent_time: Option<Zoned>,
+    pub sent_time: Option<ZonedDateTime>,
     /// 邮件到达服务器的时间（`Asia/Shanghai` 时区）。
-    pub received_time: Zoned,
+    pub received_time: ZonedDateTime,
     /// 邮件原始大小（单位：字节）。
     pub size: u64,
     /// 是否已读。
@@ -514,9 +514,9 @@ fn parse_messages_response(
     })
 }
 
-fn parse_coremail_time(text: &str) -> Result<Zoned> {
+fn parse_coremail_time(text: &str) -> Result<ZonedDateTime> {
     let trimmed = text.trim();
-    if let Ok(zoned) = trimmed.parse::<Zoned>() {
+    if let Ok(zoned) = trimmed.parse::<ZonedDateTime>() {
         return Ok(zoned);
     }
     DateTime::strptime("%Y-%m-%d %H:%M:%S", trimmed)

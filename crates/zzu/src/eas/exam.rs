@@ -1,4 +1,4 @@
-use jiff::{Zoned, civil::Date};
+use jiff::{ZonedDateTime, civil::Date};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -42,10 +42,10 @@ pub struct Exam {
     pub weekday: Option<u8>,
     /// 考试开始时间（`Asia/Shanghai` 时区；尚未排定时为 `None`）。
     #[serde(default)]
-    pub start_time: Option<Zoned>,
+    pub start_time: Option<ZonedDateTime>,
     /// 考试结束时间（`Asia/Shanghai` 时区；与 `start_time` 成对出现且严格晚于 `start_time`）。
     #[serde(default)]
-    pub end_time: Option<Zoned>,
+    pub end_time: Option<ZonedDateTime>,
     /// 考场地点中文描述（尚未排定考场时为 `None`）。
     #[serde(default)]
     pub place: Option<String>,
@@ -181,11 +181,11 @@ fn is_present_time(value: &Value) -> bool {
     }
 }
 
-fn parse_zoned_only(value: &Value) -> Result<Zoned> {
+fn parse_zoned_only(value: &Value) -> Result<ZonedDateTime> {
     let text = value
         .as_str()
         .ok_or_else(|| Error::decode_message("缺少考试日期时，时间必须为带时区字符串".into()))?;
-    text.trim().parse::<Zoned>().map_err(Error::decode)
+    text.trim().parse::<ZonedDateTime>().map_err(Error::decode)
 }
 
 fn parse_optional_scalar(value: Option<Value>) -> Result<Option<String>> {
@@ -204,14 +204,14 @@ pub(super) fn normalize_exams(mut exams: Vec<Exam>) -> Vec<Exam> {
         let left_key = (
             left.date.is_none(),
             left.date,
-            left.start_time.as_ref().map(Zoned::timestamp),
+            left.start_time.as_ref().map(ZonedDateTime::timestamp),
             &left.course_name_zh,
             left.id,
         );
         let right_key = (
             right.date.is_none(),
             right.date,
-            right.start_time.as_ref().map(Zoned::timestamp),
+            right.start_time.as_ref().map(ZonedDateTime::timestamp),
             &right.course_name_zh,
             right.id,
         );

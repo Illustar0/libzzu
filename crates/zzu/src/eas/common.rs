@@ -1,7 +1,7 @@
 use std::fmt;
 
 use jiff::{
-    Zoned,
+    ZonedDateTime,
     civil::{Date, Time},
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -199,10 +199,10 @@ pub(super) fn parse_wall_time(value: &Value) -> Result<Time> {
     Time::new(hour, minute, 0, 0).map_err(|error| Error::decode_with_source("墙钟时间无效", error))
 }
 
-/// 将上游 `HHMM`（数字或字符串）或已编码的 RFC 9557 时间字符串解析为 `Asia/Shanghai` 时区的 [`Zoned`]。
-pub(super) fn parse_time(date: Date, value: &Value) -> Result<Zoned> {
+/// 将上游 `HHMM`（数字或字符串）或已编码的 RFC 9557 时间字符串解析为 `Asia/Shanghai` 时区的 [`ZonedDateTime`]。
+pub(super) fn parse_time(date: Date, value: &Value) -> Result<ZonedDateTime> {
     if let Value::String(text) = value
-        && let Ok(datetime) = text.trim().parse::<Zoned>()
+        && let Ok(datetime) = text.trim().parse::<ZonedDateTime>()
     {
         return Ok(datetime);
     }

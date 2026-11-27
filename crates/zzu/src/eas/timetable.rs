@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
-use jiff::{Zoned, civil::Date};
+use jiff::{ZonedDateTime, civil::Date};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
@@ -402,9 +402,9 @@ pub struct ClassSession {
     /// 星期序号（`1` 表示周一，`7` 表示周日）。
     pub weekday: u8,
     /// 有效开始时间（`Asia/Shanghai` 时区；上游提供非零实际时间时优先取实际时间）。
-    pub start_time: Zoned,
+    pub start_time: ZonedDateTime,
     /// 有效结束时间（`Asia/Shanghai` 时区，严格晚于 `start_time`）。
-    pub end_time: Zoned,
+    pub end_time: ZonedDateTime,
     /// 起始节次（从 1 开始，不限 10 节）。
     pub start_unit: u8,
     /// 结束节次（不小于 `start_unit`）。
@@ -489,8 +489,8 @@ struct RawClassSession {
     #[serde(default)]
     original_date: Option<Date>,
     weekday: u8,
-    start_time: Zoned,
-    end_time: Zoned,
+    start_time: ZonedDateTime,
+    end_time: ZonedDateTime,
     start_unit: u8,
     end_unit: u8,
     #[serde(default)]
@@ -654,9 +654,9 @@ impl<'a> SessionView<'a> {
 #[derive(Clone, Debug)]
 pub struct SessionConflict<'a> {
     /// 冲突重叠区间的开始时间（含）。
-    pub start_time: Zoned,
+    pub start_time: ZonedDateTime,
     /// 冲突重叠区间的结束时间（不含）。
-    pub end_time: Zoned,
+    pub end_time: ZonedDateTime,
     /// 在 `[start_time, end_time)` 内同时重叠的全部排课视图。
     pub sessions: Vec<SessionView<'a>>,
 }
@@ -833,7 +833,11 @@ impl Timetable {
     /// # Errors
     ///
     /// `start` 不早于 `end` 时返回 [`Error::InvalidInput`]。
-    pub fn sessions_between(&self, start: &Zoned, end: &Zoned) -> Result<Vec<SessionView<'_>>> {
+    pub fn sessions_between(
+        &self,
+        start: &ZonedDateTime,
+        end: &ZonedDateTime,
+    ) -> Result<Vec<SessionView<'_>>> {
         let start = start.timestamp();
         let end = end.timestamp();
         if start >= end {
@@ -851,7 +855,7 @@ impl Timetable {
 
     /// 返回在时刻 `at` 正在进行（`start_time <= at < end_time`）的全部排课视图。
     #[must_use]
-    pub fn current_sessions(&self, at: &Zoned) -> Vec<SessionView<'_>> {
+    pub fn current_sessions(&self, at: &ZonedDateTime) -> Vec<SessionView<'_>> {
         let now = at.timestamp();
         self.sessions
             .iter()
@@ -864,7 +868,7 @@ impl Timetable {
 
     /// 返回开始时间严格晚于 `after` 的下一场排课视图。
     #[must_use]
-    pub fn next_session(&self, after: &Zoned) -> Option<SessionView<'_>> {
+    pub fn next_session(&self, after: &ZonedDateTime) -> Option<SessionView<'_>> {
         let after = after.timestamp();
         self.sessions
             .iter()
@@ -901,7 +905,7 @@ fn detect_conflicts<'a>(sessions: &[SessionView<'a>]) -> Vec<SessionConflict<'a>
     if sessions.len() < 2 {
         return Vec::new();
     }
-    let mut points: BTreeMap<i128, Zoned> = BTreeMap::new();
+    let mut points: BTreeMap<i128, ZonedDateTime> = BTreeMap::new();
     for view in sessions {
         let start = &view.session.start_time;
         let end = &view.session.end_time;
@@ -912,7 +916,7 @@ fn detect_conflicts<'a>(sessions: &[SessionView<'a>]) -> Vec<SessionConflict<'a>
             .entry(end.timestamp().as_nanosecond())
             .or_insert_with(|| end.clone());
     }
-    let timeline: Vec<(i128, Zoned)> = points.into_iter().collect();
+    let timeline: Vec<(i128, ZonedDateTime)> = points.into_iter().collect();
     let mut conflicts: Vec<SessionConflict<'a>> = Vec::new();
 
     for window in timeline.windows(2) {
@@ -1569,7 +1573,11 @@ fn normalize_schedule_inner(
     Ok(session)
 }
 
-fn resolve_effective_time(date: Date, nominal: &Value, actual: Option<&Value>) -> Result<Zoned> {
+fn resolve_effective_time(
+    date: Date,
+    nominal: &Value,
+    actual: Option<&Value>,
+) -> Result<ZonedDateTime> {
     // 实验课排课以 `0` 表示未单独指定实际时间，回退到标准时间。
     let preferred = actual.filter(|value| value.as_i64() != Some(0));
     parse_time(date, preferred.unwrap_or(nominal))

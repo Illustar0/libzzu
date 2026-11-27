@@ -1,5 +1,5 @@
 use jiff::{
-    Zoned,
+    ZonedDateTime,
     civil::{Date, DateTime},
 };
 use serde::{Deserialize, Deserializer, Serialize};
@@ -66,7 +66,7 @@ pub struct Transaction {
     /// 校园卡交易流水号。
     pub id: String,
     /// 交易发生时间（`Asia/Shanghai` 时区）。
-    pub time: Zoned,
+    pub time: ZonedDateTime,
     /// 交易金额（单位：元；消费通常为负数，充值与补助通常为正数）。
     #[serde(deserialize_with = "crate::money::deserialize_decimal")]
     pub amount: Decimal,
@@ -86,7 +86,7 @@ pub struct Transaction {
 struct RawTransaction {
     journo: String,
     #[serde(deserialize_with = "deserialize_transaction_time")]
-    date: Zoned,
+    date: ZonedDateTime,
     #[serde(deserialize_with = "crate::money::deserialize_decimal")]
     amt: Decimal,
     #[serde(default)]
@@ -189,13 +189,15 @@ fn parse_transactions_response(response: http::JsonResponse) -> Result<Vec<Trans
         .collect())
 }
 
-fn deserialize_transaction_time<'de, D>(deserializer: D) -> std::result::Result<Zoned, D::Error>
+fn deserialize_transaction_time<'de, D>(
+    deserializer: D,
+) -> std::result::Result<ZonedDateTime, D::Error>
 where
     D: Deserializer<'de>,
 {
     let text = String::deserialize(deserializer)?;
     let trimmed = text.trim();
-    if let Ok(zoned) = trimmed.parse::<Zoned>() {
+    if let Ok(zoned) = trimmed.parse::<ZonedDateTime>() {
         return Ok(zoned);
     }
     DateTime::strptime("%Y-%m-%d %H:%M:%S", trimmed)

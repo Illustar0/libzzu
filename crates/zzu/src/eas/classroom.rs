@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use jiff::{Zoned, civil::Date};
+use jiff::{ZonedDateTime, civil::Date};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
@@ -409,9 +409,9 @@ pub struct RoomOccupation {
     /// 占用公历日期。
     pub date: Date,
     /// 占用开始时间（`Asia/Shanghai` 时区）。
-    pub start_time: Zoned,
+    pub start_time: ZonedDateTime,
     /// 占用结束时间（`Asia/Shanghai` 时区，严格晚于 `start_time`）。
-    pub end_time: Zoned,
+    pub end_time: ZonedDateTime,
     /// 授课教师或借用负责人中文姓名（未提供时为空字符串）。
     pub teacher_name: String,
     /// 授课教师或借用负责人英文姓名。
@@ -530,7 +530,7 @@ impl ClassroomOccupancy {
     /// # Errors
     ///
     /// `start` 不早于 `end` 时返回 [`Error::InvalidInput`]。
-    pub fn is_free_between(&self, start: &Zoned, end: &Zoned) -> Result<bool> {
+    pub fn is_free_between(&self, start: &ZonedDateTime, end: &ZonedDateTime) -> Result<bool> {
         Ok(self.occupations_between(start, end)?.is_empty())
     }
 
@@ -539,7 +539,11 @@ impl ClassroomOccupancy {
     /// # Errors
     ///
     /// `start` 不早于 `end` 时返回 [`Error::InvalidInput`]。
-    pub fn occupations_between(&self, start: &Zoned, end: &Zoned) -> Result<Vec<&RoomOccupation>> {
+    pub fn occupations_between(
+        &self,
+        start: &ZonedDateTime,
+        end: &ZonedDateTime,
+    ) -> Result<Vec<&RoomOccupation>> {
         let start = start.timestamp();
         let end = end.timestamp();
         if start >= end {
@@ -664,7 +668,7 @@ mod tests {
 
     use super::*;
 
-    fn zoned(text: &str) -> Zoned {
+    fn zoned(text: &str) -> ZonedDateTime {
         text.parse().unwrap()
     }
 

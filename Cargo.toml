@@ -12,7 +12,7 @@ repository = "https://github.com/Illustar0/libzzu"
 [workspace.dependencies]
 zzu = { version = "0.0.0", path = "crates/zzu" }
 base64 = "0.23"
-jiff = { version = "0.2", features = ["serde", "tzdb-bundle-always"] }
+jiff = { version = "1", features = ["serde", "tzdb-bundle-always"] }
 ecb = { version = "0.2", features = ["alloc"] }
 encoding_rs = "0.8"
 hex = "0.4"
