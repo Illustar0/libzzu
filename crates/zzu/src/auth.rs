@@ -1,7 +1,13 @@
 //! 统一身份认证（CAS）会话管理、短信多因素认证、设备信任管理、个人信息与头像查询以及业务系统单点登录。
 
-use std::sync::Arc;
+use std::{
+    future::{Future, poll_fn},
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use jiff::Timestamp;
 use reqwest::{Client, Url};
 use rsa::RsaPublicKey;
@@ -779,16 +785,84 @@ impl CasClient {
     }
 }
 
+const EMAIL_REDIRECT_HEDGE_DELAY: Duration = Duration::from_millis(1500);
+const EMAIL_REDIRECT_MAX_ATTEMPTS: usize = 4;
+
 /// 携带 CAS `user_token` 请求校园邮箱单点登录入口，返回不自动跟随的重定向响应。
+///
+/// `service.s.zzu.edu.cn` 邮箱单点登录网关的后端负载均衡池存在偶发无响应节点（命中后需等待约 31 秒才由网关故障转移），
+/// 而正常节点约数十毫秒即可返回且多会话 `sid` 并存互不作废；此处通过阶梯对冲并发补发幂等请求以消解尾延迟。
 pub(crate) async fn fetch_email_login_redirect(
     http: &Client,
     token: &str,
 ) -> Result<http::Response> {
-    let request = http
-        .get(EMAIL_URL)
-        .header("Cookie", format!("X-Id-Token={token}"))
-        .header("X-Id-Token", token);
-    http::send(request).await?.allow_redirect()
+    let cookie = format!("X-Id-Token={token}");
+    hedge_redirect(|| {
+        let request = http
+            .get(EMAIL_URL)
+            .header("Cookie", &cookie)
+            .header("X-Id-Token", token);
+        http::send(request)
+    })
+    .await
+}
+
+/// 按固定阶梯间隔并发对冲幂等重定向请求：不主动中断前序在途尝试，也不引入内部隐式超时，
+/// 任一尝试率先拿到 HTTP 响应后立即校验返回并随栈帧丢弃其余在途连接。
+async fn hedge_redirect<F, Fut>(mut send_attempt: F) -> Result<http::Response>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<http::Response>>,
+{
+    enum Event {
+        AttemptFinished(Result<http::Response>),
+        TimerElapsed,
+    }
+
+    let mut in_flight = FuturesUnordered::new();
+    in_flight.push(Box::pin(send_attempt()));
+    let mut launched = 1;
+    let hedge_timer = tokio::time::sleep(EMAIL_REDIRECT_HEDGE_DELAY);
+    tokio::pin!(hedge_timer);
+
+    loop {
+        let event = poll_fn(|cx| {
+            if let Poll::Ready(Some(outcome)) = in_flight.poll_next_unpin(cx) {
+                return Poll::Ready(Event::AttemptFinished(outcome));
+            }
+            if launched < EMAIL_REDIRECT_MAX_ATTEMPTS && hedge_timer.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(Event::TimerElapsed);
+            }
+            Poll::Pending
+        })
+        .await;
+
+        match event {
+            Event::AttemptFinished(Ok(response)) => return response.allow_redirect(),
+            Event::AttemptFinished(Err(error)) => {
+                if in_flight.is_empty() {
+                    if error.is_timeout() && launched < EMAIL_REDIRECT_MAX_ATTEMPTS {
+                        in_flight.push(Box::pin(send_attempt()));
+                        launched += 1;
+                        hedge_timer
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + EMAIL_REDIRECT_HEDGE_DELAY);
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+            Event::TimerElapsed => {
+                in_flight.push(Box::pin(send_attempt()));
+                launched += 1;
+                if launched < EMAIL_REDIRECT_MAX_ATTEMPTS {
+                    hedge_timer
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + EMAIL_REDIRECT_HEDGE_DELAY);
+                }
+            }
+        }
+    }
 }
 
 fn extract_redirect_location(response: http::Response, system_name: &str) -> Result<String> {
@@ -1049,5 +1123,165 @@ mod tests {
         let error = parse_user_info(missing_attributes).unwrap_err();
         assert!(error.is_decode());
         assert!(error.request().is_some());
+    }
+
+    fn sample_redirect_response(status: u16, location: Option<&str>) -> http::Response {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Some(location) = location {
+            headers.insert(
+                reqwest::header::LOCATION,
+                reqwest::header::HeaderValue::from_str(location).unwrap(),
+            );
+        }
+        http::Response {
+            headers,
+            url: EMAIL_URL.parse().unwrap(),
+            context: Arc::new(crate::RequestContext {
+                method: "GET".into(),
+                url: EMAIL_URL.into(),
+                status_code: Some(status),
+                error_code: None,
+                response_body: Some(String::new()),
+            }),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hedge_redirect_fast_path_sends_single_request() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let attempts = AtomicUsize::new(0);
+        let started = tokio::time::Instant::now();
+        let response = hedge_redirect(|| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                Ok(sample_redirect_response(
+                    302,
+                    Some("https://mail.v.zzu.edu.cn/coremail/main.jsp?sid=s1"),
+                ))
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(started.elapsed(), Duration::from_millis(40));
+        assert_eq!(
+            response.headers.get("location").unwrap(),
+            "https://mail.v.zzu.edu.cn/coremail/main.jsp?sid=s1"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hedge_redirect_recovers_from_stalled_attempt_and_drops_pending_futures() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct InFlightGuard<'a>(&'a AtomicUsize);
+        impl Drop for InFlightGuard<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        let attempts = AtomicUsize::new(0);
+        let active = AtomicUsize::new(0);
+        let started = tokio::time::Instant::now();
+
+        let response = hedge_redirect(|| {
+            let index = attempts.fetch_add(1, Ordering::SeqCst);
+            active.fetch_add(1, Ordering::SeqCst);
+            let active_ref = &active;
+            async move {
+                let _guard = InFlightGuard(active_ref);
+                if index == 0 {
+                    tokio::time::sleep(Duration::from_millis(31_600)).await;
+                    Ok(sample_redirect_response(
+                        302,
+                        Some("https://mail.v.zzu.edu.cn/coremail/main.jsp?sid=slow"),
+                    ))
+                } else {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                    Ok(sample_redirect_response(
+                        302,
+                        Some("https://mail.v.zzu.edu.cn/coremail/main.jsp?sid=hedged"),
+                    ))
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            started.elapsed(),
+            EMAIL_REDIRECT_HEDGE_DELAY + Duration::from_millis(40)
+        );
+        assert_eq!(
+            response.headers.get("location").unwrap(),
+            "https://mail.v.zzu.edu.cn/coremail/main.jsp?sid=hedged"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hedge_redirect_preserves_in_flight_first_attempt_on_uniformly_slow_network() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let attempts = AtomicUsize::new(0);
+        let started = tokio::time::Instant::now();
+
+        let response = hedge_redirect(|| {
+            let index = attempts.fetch_add(1, Ordering::SeqCst);
+            async move {
+                tokio::time::sleep(Duration::from_millis(2_200)).await;
+                Ok(sample_redirect_response(
+                    302,
+                    Some(&format!(
+                        "https://mail.v.zzu.edu.cn/coremail/main.jsp?sid=attempt-{index}"
+                    )),
+                ))
+            }
+        })
+        .await
+        .unwrap();
+
+        // 1.5s 虽触发了第 2 次对冲，但第 1 次未被中断，仍在 2.2s 率先完成而非 1.5s + 2.2s = 3.7s。
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(started.elapsed(), Duration::from_millis(2_200));
+        assert_eq!(
+            response.headers.get("location").unwrap(),
+            "https://mail.v.zzu.edu.cn/coremail/main.jsp?sid=attempt-0"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hedge_redirect_short_circuits_immediate_errors_without_waiting_for_timer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let http_attempts = AtomicUsize::new(0);
+        let started = tokio::time::Instant::now();
+        let err = hedge_redirect(|| {
+            http_attempts.fetch_add(1, Ordering::SeqCst);
+            async { Ok(sample_redirect_response(401, None)) }
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(err.is_http());
+        assert_eq!(http_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+
+        let decode_attempts = AtomicUsize::new(0);
+        let err = hedge_redirect(|| {
+            decode_attempts.fetch_add(1, Ordering::SeqCst);
+            async { Err(Error::decode_message("连接被拒绝".into())) }
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(err.is_decode());
+        assert_eq!(decode_attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
     }
 }
