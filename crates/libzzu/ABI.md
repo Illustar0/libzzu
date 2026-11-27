@@ -447,7 +447,7 @@ zzu_runtime_free(runtime);
 
 ```json
 {
-  "brasid": "1",
+  "brasId": "1",
   "downFlow": "1024",
   "hostName": "device-host",
   "ip": "10.1.2.3",

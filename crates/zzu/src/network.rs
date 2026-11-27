@@ -644,14 +644,11 @@ pub fn local_ip(target: IpAddr) -> std::io::Result<IpAddr> {
 }
 
 /// 校园网自助服务系统返回的当前在线终端信息。
-///
-/// 反序列化时将服务端返回的 `YYYY-MM-DD HH:MM:SS` 登录时间转为 `Asia/Shanghai` 时区的 [`Zoned`]
-/// （同时兼容 RFC 9557 字符串以支持无损重序列化），并将在线时长统一解析为秒数。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineDevice {
     /// 宽带远程接入服务器（BRAS）标识。
-    pub brasid: String,
+    pub bras_id: String,
     /// 已使用下行流量文本。
     pub down_flow: String,
     /// 终端主机名（未上报时为空字符串）。
@@ -660,7 +657,6 @@ pub struct OnlineDevice {
     /// 终端分配的内网 IP 地址文本。
     pub ip: String,
     /// 终端登录时间（`Asia/Shanghai` 时区）。
-    #[serde(deserialize_with = "deserialize_login_time")]
     pub login_time: Zoned,
     /// 终端 MAC 地址文本。
     pub mac: String,
@@ -671,10 +667,47 @@ pub struct OnlineDevice {
     /// 已使用上行流量文本。
     pub up_flow: String,
     /// 在线时长（单位：秒）。
-    #[serde(deserialize_with = "deserialize_use_time")]
     pub use_time: u64,
     /// 校园网账户数字用户 ID。
     pub user_id: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawOnlineDevice {
+    #[serde(rename = "brasid")]
+    bras_id: String,
+    down_flow: String,
+    #[serde(default)]
+    host_name: Option<String>,
+    ip: String,
+    #[serde(deserialize_with = "deserialize_login_time")]
+    login_time: Zoned,
+    mac: String,
+    session_id: String,
+    terminal_type: String,
+    up_flow: String,
+    #[serde(deserialize_with = "deserialize_use_time")]
+    use_time: u64,
+    user_id: i64,
+}
+
+impl From<RawOnlineDevice> for OnlineDevice {
+    fn from(raw: RawOnlineDevice) -> Self {
+        Self {
+            bras_id: raw.bras_id,
+            down_flow: raw.down_flow,
+            host_name: raw.host_name.unwrap_or_default().trim().to_owned(),
+            ip: raw.ip,
+            login_time: raw.login_time,
+            mac: raw.mac,
+            session_id: raw.session_id,
+            terminal_type: raw.terminal_type,
+            up_flow: raw.up_flow,
+            use_time: raw.use_time,
+            user_id: raw.user_id,
+        }
+    }
 }
 
 fn deserialize_login_time<'de, D>(deserializer: D) -> std::result::Result<Zoned, D::Error>
@@ -839,7 +872,8 @@ impl SelfServiceClient {
                 .query(&query),
         )
         .await?;
-        response.decode()
+        let items: Vec<RawOnlineDevice> = response.decode()?;
+        Ok(items.into_iter().map(OnlineDevice::from).collect())
     }
 
     /// 根据在线设备的 `session_id` 强制指定终端下线。
@@ -1026,6 +1060,7 @@ mod tests {
         let raw = serde_json::json!({
             "brasid": "1",
             "downFlow": "1024",
+            "hostName": null,
             "ip": "10.1.2.3",
             "loginTime": "2026-10-31 08:30:45",
             "mac": "001122334455",
@@ -1035,25 +1070,30 @@ mod tests {
             "useTime": "3661",
             "userId": 42
         });
-        let device: OnlineDevice = serde_json::from_value(raw.clone()).unwrap();
+        let raw_device: RawOnlineDevice = serde_json::from_value(raw.clone()).unwrap();
+        let device = OnlineDevice::from(raw_device);
+        assert_eq!(device.bras_id, "1");
+        assert_eq!(device.host_name, "");
         assert_eq!(
             device.login_time.to_string(),
             "2026-10-31T08:30:45+08:00[Asia/Shanghai]"
         );
         assert_eq!(device.use_time, 3661);
 
-        let serialized = serde_json::to_string(&device).unwrap();
-        let roundtripped: OnlineDevice = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(roundtripped.login_time, device.login_time);
-        assert_eq!(roundtripped.use_time, 3661);
+        let serialized = serde_json::to_value(&device).unwrap();
+        assert_eq!(serialized["brasId"], "1");
+        assert!(serialized.get("brasid").is_none());
+        let roundtripped: OnlineDevice = serde_json::from_value(serialized).unwrap();
+        assert_eq!(roundtripped, device);
+        assert!(serde_json::from_value::<OnlineDevice>(raw.clone()).is_err());
 
         let mut bad_time = raw.clone();
         bad_time["loginTime"] = serde_json::json!("not-a-datetime");
-        assert!(serde_json::from_value::<OnlineDevice>(bad_time).is_err());
+        assert!(serde_json::from_value::<RawOnlineDevice>(bad_time).is_err());
 
         let mut bad_duration = raw;
         bad_duration["useTime"] = serde_json::json!("1h2m");
-        assert!(serde_json::from_value::<OnlineDevice>(bad_duration).is_err());
+        assert!(serde_json::from_value::<RawOnlineDevice>(bad_duration).is_err());
     }
 
     #[test]
